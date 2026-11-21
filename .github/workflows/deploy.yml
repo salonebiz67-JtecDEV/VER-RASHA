@@ -80,17 +80,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -n "${{ vars.VITE_BASE_PATH }}" ]; then
-            echo "value=${{ vars.VITE_BASE_PATH }}" >> "$GITHUB_OUTPUT"
+          # Always derive the base path from the repository name so a wrong
+          # repository variable can never break asset loading.
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          OWNER_PAGES_REPO="${GITHUB_REPOSITORY_OWNER}.github.io"
+          if [ "$REPO_NAME" = "$OWNER_PAGES_REPO" ]; then
+            echo "value=/" >> "$GITHUB_OUTPUT"
           else
-            REPO_NAME="${GITHUB_REPOSITORY#*/}"
-            OWNER_PAGES_REPO="${GITHUB_REPOSITORY_OWNER}.github.io"
-            if [ "$REPO_NAME" = "$OWNER_PAGES_REPO" ]; then
-              echo "value=/" >> "$GITHUB_OUTPUT"
-            else
-              echo "value=/${REPO_NAME}/" >> "$GITHUB_OUTPUT"
-            fi
+            echo "value=/${REPO_NAME}/" >> "$GITHUB_OUTPUT"
           fi
+          echo "Using base path: $(tail -n1 "$GITHUB_OUTPUT")"
 
       - name: Build production frontend bundle
         working-directory: ${{ steps.project_dir.outputs.path }}
