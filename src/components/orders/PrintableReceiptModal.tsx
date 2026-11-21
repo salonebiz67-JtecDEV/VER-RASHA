@@ -1,5 +1,5 @@
 import React from 'react';
-import { Printer, X } from 'lucide-react';
+import { FileDown, Printer, X } from 'lucide-react';
 import type { OrderRecord } from '../../types/boutique';
 import { formatPrice } from '../../utils/formatCurrency';
 import {
@@ -39,18 +39,31 @@ export const PrintableReceiptModal: React.FC<PrintableReceiptModalProps> = ({
     >
       <div className="my-auto w-full max-w-2xl rounded-2xl border border-[#D8C3A5] bg-[#FCF9F4] p-5 shadow-2xl sm:p-8">
         {/* Screen-only Action Header */}
-        <div className="no-print mb-5 flex items-center justify-between gap-3 border-b border-[#E4D8C5] pb-4">
-          <p className="text-xs font-medium tracking-wider text-[#665B51] uppercase">
-            Printable Document
-          </p>
-          <div className="flex items-center gap-2">
+        <div className="no-print mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-[#E4D8C5] pb-4">
+          <div>
+            <p className="text-xs font-medium tracking-wider text-[#665B51] uppercase">
+              {documentTitle}
+            </p>
+            <p className="text-[11px] text-[#665B51]">
+              Use Print or choose &ldquo;Save as PDF&rdquo; in your device print dialog.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={handlePrint}
-              className="inline-flex min-h-[42px] items-center gap-2 rounded-full bg-[#302923] px-5 py-2 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35]"
+              className="inline-flex min-h-[42px] items-center gap-2 rounded-full bg-[#302923] px-4 py-2 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35]"
             >
               <Printer className="h-4 w-4" strokeWidth={1.6} />
-              <span>Print / Save PDF</span>
+              <span>{confirmed ? 'Print Receipt' : 'Print Summary'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={handlePrint}
+              className="inline-flex min-h-[42px] items-center gap-2 rounded-full border border-[#D8C3A5] bg-[#F6F1E8] px-4 py-2 text-xs font-semibold tracking-wider text-[#302923] uppercase transition-colors hover:bg-[#EFE7DA]"
+            >
+              <FileDown className="h-4 w-4" strokeWidth={1.6} />
+              <span>Save as PDF</span>
             </button>
             <button
               type="button"

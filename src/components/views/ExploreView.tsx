@@ -1,11 +1,12 @@
 import React, { useMemo } from 'react';
 import { AlertCircle, RotateCcw, Search, SlidersHorizontal, X } from 'lucide-react';
-import { CATEGORIES, PRODUCTS } from '../../data/catalog';
+import { CATEGORIES } from '../../data/catalog';
 import { type PriceBand, type SortOption, useBoutique } from '../../context/BoutiqueContext';
 import { ProductCard } from '../ui/ProductCard';
 
 export const ExploreView: React.FC = () => {
   const {
+    products,
     searchQuery,
     setSearchQuery,
     activeCategory,
@@ -18,12 +19,13 @@ export const ExploreView: React.FC = () => {
     isCatalogLoading,
     catalogError,
     retryCatalogLoad,
+    attemptSecretOwnerAccess,
   } = useBoutique();
 
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
 
-    let list = PRODUCTS.filter((product) => {
+    let list = products.filter((product) => {
       if (activeCategory !== 'all' && product.category !== activeCategory) {
         return false;
       }
@@ -49,10 +51,20 @@ export const ExploreView: React.FC = () => {
     }
 
     return list;
-  }, [searchQuery, activeCategory, priceBand, sortBy]);
+  }, [products, searchQuery, activeCategory, priceBand, sortBy]);
 
   const hasActiveFilters =
     searchQuery.trim() !== '' || activeCategory !== 'all' || priceBand !== 'all' || sortBy !== 'featured';
+
+  const handleExploreSearchSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const submitted = searchQuery.trim();
+    if (!submitted) return;
+    const granted = await attemptSecretOwnerAccess(submitted);
+    if (granted) {
+      setSearchQuery('');
+    }
+  };
 
   return (
     <div className="mx-auto max-w-7xl px-4 pt-6 pb-12 sm:px-6 md:pt-10">
@@ -74,7 +86,10 @@ export const ExploreView: React.FC = () => {
       <div className="mt-6 space-y-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           {/* Search Input */}
-          <div className="relative flex-1 lg:max-w-md">
+          <form
+            onSubmit={(e) => void handleExploreSearchSubmit(e)}
+            className="relative flex-1 lg:max-w-md"
+          >
             <Search
               className="pointer-events-none absolute top-1/2 left-4 h-4 w-4 -translate-y-1/2 text-[#665B51]"
               strokeWidth={1.6}
@@ -97,7 +112,7 @@ export const ExploreView: React.FC = () => {
                 <X className="h-4 w-4" />
               </button>
             )}
-          </div>
+          </form>
 
           {/* Price & Sort Controls */}
           <div className="flex flex-wrap items-center gap-3">

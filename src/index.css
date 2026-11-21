@@ -49,6 +49,11 @@
   scrollbar-width: none;
 }
 
+.scroll-touch {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -62,6 +67,16 @@
   @page {
     size: auto;
     margin: 14mm;
+  }
+
+  html, body, #root, .vey-app-shell, .vey-scroll-container {
+    height: auto !important;
+    overflow: visible !important;
+    position: static !important;
+  }
+
+  [data-page-active="false"] {
+    display: none !important;
   }
 
   body {

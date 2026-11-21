@@ -1,14 +1,13 @@
 import React from 'react';
 import { Heart, ShoppingBag, Trash2 } from 'lucide-react';
-import { PRODUCTS } from '../../data/catalog';
 import { useBoutique } from '../../context/BoutiqueContext';
 import { formatPrice } from '../../utils/formatCurrency';
 import { LuxuryImage } from '../ui/LuxuryImage';
 
 export const WishlistView: React.FC = () => {
-  const { wishlistIds, toggleWishlist, addToCart, navigate, currency } = useBoutique();
+  const { products, wishlistIds, toggleWishlist, addToCart, navigate, currency } = useBoutique();
 
-  const savedProducts = PRODUCTS.filter((p) => wishlistIds.includes(p.id));
+  const savedProducts = products.filter((p) => wishlistIds.includes(p.id));
 
   return (
     <div className="mx-auto max-w-7xl px-4 pt-6 pb-12 sm:px-6 md:pt-10">

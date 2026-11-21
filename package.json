@@ -1,15 +1,19 @@
 {
-  "name": "react-example",
+  "name": "vey-rasha-boutique",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.14.0"
+  },
   "scripts": {
     "dev": "tsx server.ts",
     "start": "node server.ts",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "owner:recover": "tsx server/recover-owner.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

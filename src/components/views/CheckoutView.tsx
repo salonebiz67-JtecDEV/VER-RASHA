@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
   Clock,
   MapPin,
   Printer,
+  RefreshCw,
   ShieldCheck,
   User,
 } from 'lucide-react';
-import { PRODUCTS } from '../../data/catalog';
 import { useBoutique } from '../../context/BoutiqueContext';
 import type { OrderRecord } from '../../types/boutique';
 import { formatPrice } from '../../utils/formatCurrency';
@@ -18,6 +18,7 @@ import { LuxuryImage } from '../ui/LuxuryImage';
 
 export const CheckoutView: React.FC = () => {
   const {
+    products,
     cart,
     cartSubtotalUsd,
     giftWrap,
@@ -28,6 +29,9 @@ export const CheckoutView: React.FC = () => {
     clearCart,
     navigate,
     currency,
+    backendStatus,
+    backendErrorMessage,
+    checkBackendHealth,
   } = useBoutique();
 
   // Manual Customer Information (never auto-retrieved, zero geolocation)
@@ -45,6 +49,16 @@ export const CheckoutView: React.FC = () => {
   const [submittedOrder, setSubmittedOrder] = useState<OrderRecord | null>(null);
   const [submissionMessage, setSubmissionMessage] = useState<string | null>(null);
   const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const confirmationRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (submittedOrder) {
+      confirmationRef.current?.closest('[data-scroll-container]')?.scrollTo({
+        top: 0,
+        behavior: 'smooth',
+      });
+    }
+  }, [submittedOrder]);
 
   const applySavedAddress = (addressId: string) => {
     const found = addresses.find((a) => a.id === addressId);
@@ -95,7 +109,7 @@ export const CheckoutView: React.FC = () => {
     try {
       const items = cart
         .map((item) => {
-          const prod = PRODUCTS.find((p) => p.id === item.productId);
+          const prod = products.find((p) => p.id === item.productId);
           if (!prod) return null;
           return {
             productId: prod.id,
@@ -143,7 +157,6 @@ export const CheckoutView: React.FC = () => {
       setSubmittedOrder(result.order);
       setSubmissionMessage(result.message);
       clearCart();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setIsSubmitting(false);
     }
@@ -152,7 +165,10 @@ export const CheckoutView: React.FC = () => {
   // Order Request Received Screen (Pending Review — NEVER falsely marked accepted)
   if (submittedOrder) {
     return (
-      <div className="mx-auto max-w-3xl px-4 pt-8 pb-24 sm:px-6 md:pt-12">
+      <div
+        ref={confirmationRef}
+        className="mx-auto max-w-3xl px-4 pt-8 pb-24 sm:px-6 md:pt-12"
+      >
         <div className="rounded-2xl border border-[#D8C3A5] bg-[#FCF9F4] p-6 sm:p-10">
           <div className="flex flex-col items-center text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#EFE7DA] text-[#8C6D46]">
@@ -314,6 +330,29 @@ export const CheckoutView: React.FC = () => {
       >
         {/* Left: Manual Customer & Delivery Information */}
         <div className="space-y-6 lg:col-span-7">
+          {backendStatus === 'unavailable' && (
+            <div
+              role="status"
+              className="flex flex-col items-start justify-between gap-3 rounded-xl border border-[#D8C3A5] bg-[#EFE7DA] px-4 py-3.5 text-xs text-[#302923] sm:flex-row sm:items-center"
+            >
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#8C6D46]" />
+                <span>
+                  {backendErrorMessage ??
+                    'The boutique order server is currently unreachable. Please reconnect before placing your order request.'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => void checkBackendHealth()}
+                className="inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-full border border-[#302923]/30 bg-[#FCF9F4] px-3.5 py-1.5 text-[11px] font-semibold tracking-wider text-[#302923] uppercase hover:bg-[#F6F1E8]"
+              >
+                <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.6} />
+                <span>Retry</span>
+              </button>
+            </div>
+          )}
+
           {formError && (
             <div
               role="alert"
@@ -526,12 +565,12 @@ export const CheckoutView: React.FC = () => {
         </div>
 
         {/* Right: Order Summary */}
-        <aside className="rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] p-5 sm:p-7 lg:sticky lg:top-24 lg:col-span-5">
+        <aside className="rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] p-5 sm:p-7 lg:sticky lg:top-8 lg:col-span-5">
           <h2 className="font-serif text-2xl font-medium text-[#302923]">Order Summary</h2>
 
           <ul className="mt-4 divide-y divide-[#E4D8C5]">
             {cart.map((item) => {
-              const product = PRODUCTS.find((p) => p.id === item.productId);
+              const product = products.find((p) => p.id === item.productId);
               if (!product) return null;
               return (
                 <li key={item.id} className="flex gap-3.5 py-3.5">

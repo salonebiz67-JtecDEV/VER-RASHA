@@ -23,7 +23,7 @@ export const BottomNav: React.FC = () => {
     if (route === tabRoute) return true;
     if (tabRoute === 'explore' && route === 'product') return true;
     if (tabRoute === 'cart' && route === 'checkout') return true;
-    if (tabRoute === 'account' && (route === 'notifications' || route === 'owner')) return true;
+    if (tabRoute === 'account' && route === 'notifications') return true;
     return false;
   };
 

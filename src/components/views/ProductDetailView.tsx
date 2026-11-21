@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Check, Heart, Minus, Plus, ShieldCheck, ShoppingBag } from 'lucide-react';
-import { PRODUCTS } from '../../data/catalog';
 import { useBoutique } from '../../context/BoutiqueContext';
 import { formatPrice } from '../../utils/formatCurrency';
 import { LuxuryImage } from '../ui/LuxuryImage';
@@ -8,6 +7,7 @@ import { ProductCard } from '../ui/ProductCard';
 
 export const ProductDetailView: React.FC = () => {
   const {
+    products,
     selectedProductId,
     navigate,
     currency,
@@ -16,7 +16,7 @@ export const ProductDetailView: React.FC = () => {
     toggleWishlist,
   } = useBoutique();
 
-  const product = PRODUCTS.find((p) => p.id === selectedProductId) ?? PRODUCTS[0];
+  const product = products.find((p) => p.id === selectedProductId) ?? products[0];
   const [activeImageIdx, setActiveImageIdx] = useState(0);
   const [selectedSize, setSelectedSize] = useState(product.sizes[0]);
   const [selectedColor, setSelectedColor] = useState(product.colors[0]);
@@ -24,6 +24,7 @@ export const ProductDetailView: React.FC = () => {
   const [addedFeedback, setAddedFeedback] = useState(false);
 
   useEffect(() => {
+    if (!product) return;
     setActiveImageIdx(0);
     setSelectedSize(product.sizes[0]);
     setSelectedColor(product.colors[0]);
@@ -31,10 +32,14 @@ export const ProductDetailView: React.FC = () => {
     setAddedFeedback(false);
   }, [product]);
 
+  if (!product) return null;
+
   const saved = isWishlisted(product.id);
-  const relatedProducts = PRODUCTS.filter(
-    (p) => p.id !== product.id && (p.category === product.category || p.collectionId === product.collectionId)
-  ).slice(0, 3);
+  const relatedProducts = products
+    .filter(
+      (p) => p.id !== product.id && (p.category === product.category || p.collectionId === product.collectionId)
+    )
+    .slice(0, 3);
 
   const stockDisplay =
     product.stockStatus === 'in_stock'
@@ -106,7 +111,7 @@ export const ProductDetailView: React.FC = () => {
         </div>
 
         {/* Right: Contiguous Purchase Module */}
-        <div className="rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] p-6 sm:p-8 lg:sticky lg:top-24 lg:col-span-5">
+        <div className="rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] p-6 sm:p-8 lg:sticky lg:top-8 lg:col-span-5">
           <p className="text-xs font-medium tracking-[0.14em] text-[#8C6D46] uppercase">
             {product.categoryLabel} · {product.subtitle}
           </p>

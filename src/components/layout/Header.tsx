@@ -1,10 +1,17 @@
 import React from 'react';
-import { Bell, Search, ShoppingBag } from 'lucide-react';
+import { Bell, Search, ShieldCheck, ShoppingBag } from 'lucide-react';
 import { useBoutique } from '../../context/BoutiqueContext';
 import type { AppRoute } from '../../types/boutique';
 
 export const Header: React.FC = () => {
-  const { route, navigate, cartCount, unreadNotificationCount } = useBoutique();
+  const {
+    route,
+    navigate,
+    cartCount,
+    unreadNotificationCount,
+    isOwnerAuthorized,
+    openOwnerDashboard,
+  } = useBoutique();
 
   const navItems: { route: AppRoute; label: string }[] = [
     { route: 'home', label: 'Home' },
@@ -15,7 +22,7 @@ export const Header: React.FC = () => {
   ];
 
   return (
-    <header className="sticky top-0 z-40 border-b border-[#E4D8C5]/80 bg-[#F6F1E8]/92 backdrop-blur-md pt-safe">
+    <header className="relative z-40 shrink-0 border-b border-[#E4D8C5]/80 bg-[#F6F1E8]/92 backdrop-blur-md pt-safe">
       {/* Desktop 3-Zone Top Bar */}
       <div className="mx-auto hidden max-w-7xl items-center justify-between gap-8 px-6 py-4 md:flex">
         <button
@@ -55,7 +62,17 @@ export const Header: React.FC = () => {
           })}
         </nav>
 
-        <div className="flex items-center shrink-0">
+        <div className="flex items-center gap-2.5 shrink-0">
+          {isOwnerAuthorized && (
+            <button
+              type="button"
+              onClick={openOwnerDashboard}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#D8C3A5] bg-[#EFE7DA] px-4 py-2 text-xs font-medium text-[#302923] transition-colors hover:bg-[#E4D8C5] whitespace-nowrap shrink-0"
+            >
+              <ShieldCheck className="h-3.5 w-3.5 text-[#8C6D46]" strokeWidth={1.75} />
+              <span>Workspace</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => navigate('cart')}
@@ -79,6 +96,16 @@ export const Header: React.FC = () => {
         </button>
 
         <div className="flex items-center gap-1">
+          {isOwnerAuthorized && (
+            <button
+              type="button"
+              onClick={openOwnerDashboard}
+              aria-label="Open Atelier Workspace"
+              className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-[#8C6D46] transition-colors hover:bg-[#EFE7DA]"
+            >
+              <ShieldCheck className="h-5 w-5" strokeWidth={1.7} />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => navigate('explore')}

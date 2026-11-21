@@ -8,6 +8,8 @@ import React, {
   useState,
 } from 'react';
 import {
+  EDITORIAL_CAMPAIGNS,
+  FEATURED_COLLECTIONS,
   INITIAL_ADDRESSES,
   INITIAL_CUSTOMER,
   INITIAL_NOTIFICATIONS,
@@ -15,20 +17,32 @@ import {
   PRODUCTS,
 } from '../data/catalog';
 import { DEFAULT_STORE_SETTINGS } from '../data/storeConfig';
+import { apiUrl, APP_BASE_PATH, wsUrl } from '../config/api';
+import {
+  buildSignedOwnerHeaders,
+  clearNativeOwnerToken,
+  getNativeOwnerToken,
+  getOrCreateDeviceIdentity,
+  saveNativeOwnerToken,
+} from '../security/ownerDeviceStorage';
 import type {
   AppRoute,
   CartItem,
   CategorySlug,
+  Collection,
   ColorOption,
   CurrencyCode,
   CustomerProfile,
+  EditorialCampaign,
   NotificationItem,
   OrderRecord,
   OrderRequestPayload,
   OrderStatus,
   OrderSubmissionResult,
-  OwnerAuthResult,
-  OwnerAuthStatus,
+  OwnerDeviceSlot,
+  OwnerDeviceSummary,
+  OwnerSecuritySummary,
+  OwnerSessionInfo,
   PaymentStatus,
   Product,
   SavedAddress,
@@ -37,8 +51,26 @@ import type {
 
 export type SortOption = 'featured' | 'price-asc' | 'price-desc' | 'newest';
 export type PriceBand = 'all' | 'under-450' | '450-900' | 'over-900';
+export type BackendStatus = 'checking' | 'connected' | 'unavailable';
 
 type BrowserNotificationPermission = 'default' | 'granted' | 'denied' | 'unsupported';
+
+interface ProductMutationInput {
+  name: string;
+  subtitle: string;
+  category: Exclude<CategorySlug, 'all'>;
+  collectionId: string;
+  priceUsd: number;
+  images: string[];
+  description: string;
+  material: string;
+  care: string;
+  sizes: string[];
+  colors: ColorOption[];
+  stockCount: number;
+  isNewArrival: boolean;
+  isBestSeller: boolean;
+}
 
 interface BoutiqueContextValue {
   route: AppRoute;
@@ -53,6 +85,9 @@ interface BoutiqueContextValue {
   sortBy: SortOption;
   setSortBy: (sort: SortOption) => void;
   resetExploreFilters: () => void;
+  products: Product[];
+  collections: Collection[];
+  campaigns: EditorialCampaign[];
   storeSettings: StoreSettings;
   currency: CurrencyCode;
   setCurrency: (c: CurrencyCode) => void;
@@ -73,11 +108,16 @@ interface BoutiqueContextValue {
   updateCustomer: (patch: Partial<CustomerProfile>) => void;
   addresses: SavedAddress[];
   addAddress: (address: Omit<SavedAddress, 'id'>) => SavedAddress;
+  updateAddress: (id: string, patch: Omit<SavedAddress, 'id'>) => void;
   removeAddress: (id: string) => void;
   setDefaultAddress: (id: string) => void;
   orders: OrderRecord[];
   isLoadingOrders: boolean;
   refreshOrders: () => Promise<void>;
+  retrieveGuestOrder: (
+    orderReference: string,
+    phone: string
+  ) => Promise<{ ok: boolean; order?: OrderRecord; error?: string }>;
   notifications: NotificationItem[];
   unreadNotificationCount: number;
   isLoadingNotifications: boolean;
@@ -87,13 +127,24 @@ interface BoutiqueContextValue {
   markAllNotificationsRead: () => void;
   browserNotificationPermission: BrowserNotificationPermission;
   requestBrowserNotifications: () => Promise<void>;
-  isOwnerAuthenticated: boolean;
-  ownerEmail: string | null;
-  ownerAuthStatus: OwnerAuthStatus | null;
-  refreshOwnerAuthStatus: () => Promise<void>;
-  setupOwnerAccount: (email: string, password: string) => Promise<OwnerAuthResult>;
-  authenticateOwner: (email: string, password: string) => Promise<OwnerAuthResult>;
-  signOutOwner: () => void;
+
+  // Private Two-Device Owner Dashboard State & Actions
+  isOwnerAuthorized: boolean;
+  isOwnerDashboardOpen: boolean;
+  currentOwnerDevice: OwnerDeviceSummary | null;
+  ownerSecurity: OwnerSecuritySummary | null;
+  attemptSecretOwnerAccess: (candidateCode: string) => Promise<boolean>;
+  openOwnerDashboard: () => void;
+  closeOwnerDashboard: () => void;
+  refreshOwnerSecurity: () => Promise<void>;
+  rotateCurrentOwnerToken: () => Promise<{ ok: boolean; error?: string }>;
+  revokeAuthorizedDevice: (slot: OwnerDeviceSlot) => Promise<{ ok: boolean; error?: string }>;
+  generateReplacementDeviceCode: (
+    targetSlot: OwnerDeviceSlot
+  ) => Promise<{ ok: boolean; code?: string; expiresAt?: string; error?: string }>;
+  signOutOwnerSession: () => Promise<void>;
+
+  // Owner Management Operations
   ownerOrders: OrderRecord[];
   isLoadingOwnerOrders: boolean;
   refreshOwnerOrders: () => Promise<void>;
@@ -109,6 +160,37 @@ interface BoutiqueContextValue {
     orderId: string,
     paymentStatus: PaymentStatus
   ) => Promise<{ ok: boolean; error?: string; order?: OrderRecord }>;
+  createOwnerProduct: (
+    payload: ProductMutationInput
+  ) => Promise<{ ok: boolean; error?: string; product?: Product }>;
+  updateOwnerProduct: (
+    productId: string,
+    payload: Partial<ProductMutationInput>
+  ) => Promise<{ ok: boolean; error?: string; product?: Product }>;
+  deleteOwnerProduct: (productId: string) => Promise<{ ok: boolean; error?: string }>;
+  updateOwnerInventory: (
+    productId: string,
+    stockCount: number
+  ) => Promise<{ ok: boolean; error?: string }>;
+  updateOwnerCampaign: (
+    campaignId: string,
+    payload: Partial<EditorialCampaign>
+  ) => Promise<{ ok: boolean; error?: string }>;
+  updateOwnerCollection: (
+    collectionId: string,
+    payload: Partial<Collection>
+  ) => Promise<{ ok: boolean; error?: string }>;
+  publishOwnerAnnouncement: (
+    title: string,
+    message: string
+  ) => Promise<{ ok: boolean; error?: string }>;
+  updateOwnerStoreSettings: (
+    patch: Partial<StoreSettings>
+  ) => Promise<{ ok: boolean; error?: string }>;
+
+  backendStatus: BackendStatus;
+  backendErrorMessage: string | null;
+  checkBackendHealth: () => Promise<boolean>;
   toastMessage: string | null;
   showToast: (message: string) => void;
   isCatalogLoading: boolean;
@@ -118,13 +200,6 @@ interface BoutiqueContextValue {
 }
 
 const BoutiqueContext = createContext<BoutiqueContextValue | undefined>(undefined);
-
-function isOwnerUrlEntry(): boolean {
-  if (typeof window === 'undefined') return false;
-  const hash = window.location.hash.toLowerCase();
-  const path = window.location.pathname.toLowerCase();
-  return hash === '#/owner' || hash === '#owner' || path === '/owner';
-}
 
 function upsertOrder(list: OrderRecord[], incoming: OrderRecord): OrderRecord[] {
   const exists = list.some((o) => o.id === incoming.id);
@@ -152,10 +227,67 @@ function readBrowserNotificationPermission(): BrowserNotificationPermission {
   return Notification.permission;
 }
 
+const PUBLIC_ROUTES: ReadonlySet<AppRoute> = new Set([
+  'home',
+  'explore',
+  'wishlist',
+  'cart',
+  'checkout',
+  'account',
+  'notifications',
+]);
+
+function stripBaseFromPathname(pathname: string): string {
+  const baseNoTrailing = APP_BASE_PATH === '/' ? '' : APP_BASE_PATH.slice(0, -1);
+  let relative = pathname;
+  if (baseNoTrailing && relative.toLowerCase().startsWith(baseNoTrailing.toLowerCase())) {
+    relative = relative.slice(baseNoTrailing.length);
+  }
+  return relative.replace(/^\/+|\/+$/g, '');
+}
+
+function parseRouteFromLocation(): { route: AppRoute; productId: string } {
+  if (typeof window === 'undefined') {
+    return { route: 'home', productId: PRODUCTS[0].id };
+  }
+  const relative = stripBaseFromPathname(window.location.pathname);
+  const hash = window.location.hash.toLowerCase();
+  if (hash === '#/owner' || hash === '#owner' || relative.toLowerCase() === 'owner') {
+    return { route: 'home', productId: PRODUCTS[0].id };
+  }
+  if (!relative || relative === 'home') {
+    return { route: 'home', productId: PRODUCTS[0].id };
+  }
+  const segments = relative.split('/').filter(Boolean);
+  if (segments[0] === 'product' && segments[1]) {
+    return { route: 'product', productId: decodeURIComponent(segments[1]) };
+  }
+  const candidate = segments[0] as AppRoute;
+  if (PUBLIC_ROUTES.has(candidate)) {
+    return { route: candidate, productId: PRODUCTS[0].id };
+  }
+  return { route: 'home', productId: PRODUCTS[0].id };
+}
+
+function buildUrlForRoute(route: AppRoute, productId?: string): string {
+  if (route === 'home' || route === 'owner') {
+    return APP_BASE_PATH;
+  }
+  if (route === 'product' && productId) {
+    return `${APP_BASE_PATH}product/${encodeURIComponent(productId)}`;
+  }
+  return `${APP_BASE_PATH}${route}`;
+}
+
 export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [storeSettings] = useState<StoreSettings>(DEFAULT_STORE_SETTINGS);
-  const [route, setRoute] = useState<AppRoute>(() => (isOwnerUrlEntry() ? 'owner' : 'home'));
-  const [selectedProductId, setSelectedProductId] = useState<string>(PRODUCTS[0].id);
+  const initialLocation = useMemo(() => parseRouteFromLocation(), []);
+  const [products, setProducts] = useState<Product[]>(PRODUCTS);
+  const [collections, setCollections] = useState<Collection[]>(FEATURED_COLLECTIONS);
+  const [campaigns, setCampaigns] = useState<EditorialCampaign[]>(EDITORIAL_CAMPAIGNS);
+  const [storeSettings, setStoreSettings] = useState<StoreSettings>(DEFAULT_STORE_SETTINGS);
+
+  const [route, setRoute] = useState<AppRoute>(initialLocation.route);
+  const [selectedProductId, setSelectedProductId] = useState<string>(initialLocation.productId);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<CategorySlug>('all');
   const [priceBand, setPriceBand] = useState<PriceBand>('all');
@@ -181,14 +313,10 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [customer, setCustomer] = useState<CustomerProfile>(INITIAL_CUSTOMER);
   const [addresses, setAddresses] = useState<SavedAddress[]>(INITIAL_ADDRESSES);
 
-  // In-memory Bearer tokens (never written to localStorage/sessionStorage)
+  // In-memory customer Bearer token (never written to localStorage/sessionStorage)
   const [customerToken, setCustomerToken] = useState<string | null>(null);
   const customerTokenRef = useRef<string | null>(null);
   customerTokenRef.current = customerToken;
-
-  const [ownerToken, setOwnerToken] = useState<string | null>(null);
-  const ownerTokenRef = useRef<string | null>(null);
-  ownerTokenRef.current = ownerToken;
 
   const [orders, setOrders] = useState<OrderRecord[]>(INITIAL_ORDERS);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
@@ -198,12 +326,16 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [browserNotificationPermission, setBrowserNotificationPermission] =
     useState<BrowserNotificationPermission>(() => readBrowserNotificationPermission());
 
-  const [isOwnerAuthenticated, setIsOwnerAuthenticated] = useState(false);
-  const [ownerEmail, setOwnerEmail] = useState<string | null>(null);
-  const [ownerAuthStatus, setOwnerAuthStatus] = useState<OwnerAuthStatus | null>(null);
+  // Device-bound Owner Security State (auth token held in HttpOnly cookie or Android Keystore)
+  const [isOwnerAuthorized, setIsOwnerAuthorized] = useState(false);
+  const [isOwnerDashboardOpen, setIsOwnerDashboardOpen] = useState(false);
+  const [currentOwnerDevice, setCurrentOwnerDevice] = useState<OwnerDeviceSummary | null>(null);
+  const [ownerSecurity, setOwnerSecurity] = useState<OwnerSecuritySummary | null>(null);
   const [ownerOrders, setOwnerOrders] = useState<OrderRecord[]>([]);
   const [isLoadingOwnerOrders, setIsLoadingOwnerOrders] = useState(false);
 
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>('checking');
+  const [backendErrorMessage, setBackendErrorMessage] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isCatalogLoading, setIsCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -212,16 +344,220 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setToastMessage(message);
   }, []);
 
+  const applyCatalogSnapshot = useCallback(
+    (data: {
+      products?: Product[];
+      collections?: Collection[];
+      campaigns?: EditorialCampaign[];
+      storeSettings?: StoreSettings;
+    }) => {
+      if (Array.isArray(data.products)) setProducts(data.products);
+      if (Array.isArray(data.collections)) setCollections(data.collections);
+      if (Array.isArray(data.campaigns)) setCampaigns(data.campaigns);
+      if (data.storeSettings) setStoreSettings(data.storeSettings);
+    },
+    []
+  );
+
+  // Clean up any legacy owner hash or unknown subpath in URL without leaking owner entry
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash.toLowerCase();
+      const relative = stripBaseFromPathname(window.location.pathname).toLowerCase();
+      if (hash === '#/owner' || hash === '#owner' || relative === 'owner') {
+        window.history.replaceState(null, '', APP_BASE_PATH);
+      }
+    }
+  }, []);
+
+  const loadCatalogFromBackend = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await fetch(apiUrl('/api/catalog'));
+      if (!res.ok) {
+        return false;
+      }
+      const data = (await res.json()) as {
+        products?: Product[];
+        collections?: Collection[];
+        campaigns?: EditorialCampaign[];
+        storeSettings?: StoreSettings;
+      };
+      applyCatalogSnapshot(data);
+      setBackendStatus('connected');
+      setBackendErrorMessage(null);
+      setCatalogError(null);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [applyCatalogSnapshot]);
+
+  const checkBackendHealth = useCallback(async (): Promise<boolean> => {
+    setBackendStatus('checking');
+    try {
+      const res = await fetch(apiUrl('/health'), { cache: 'no-store' });
+      if (!res.ok) {
+        setBackendStatus('unavailable');
+        setBackendErrorMessage(
+          'The boutique order & notification server is currently unavailable. Please retry in a moment.'
+        );
+        return false;
+      }
+      const data = (await res.json()) as { status?: string };
+      if (data.status !== 'ok') {
+        setBackendStatus('unavailable');
+        setBackendErrorMessage(
+          'The boutique backend returned an unexpected status. Please retry shortly.'
+        );
+        return false;
+      }
+      setBackendStatus('connected');
+      setBackendErrorMessage(null);
+      void loadCatalogFromBackend();
+      return true;
+    } catch {
+      setBackendStatus('unavailable');
+      setBackendErrorMessage(
+        'Unable to reach the boutique backend server. Live orders and notifications require a connection.'
+      );
+      return false;
+    }
+  }, [loadCatalogFromBackend]);
+
+  // Verify backend health and load live catalog snapshot on boot
+  useEffect(() => {
+    let active = true;
+    const initBoot = async () => {
+      try {
+        const res = await fetch(apiUrl('/health'), { cache: 'no-store' });
+        if (!active) return;
+        if (res.ok) {
+          setBackendStatus('connected');
+          setBackendErrorMessage(null);
+          await loadCatalogFromBackend();
+        } else {
+          setBackendStatus('unavailable');
+          setBackendErrorMessage(
+            'The boutique order & notification server is currently unavailable.'
+          );
+        }
+      } catch {
+        if (active) {
+          setBackendStatus('unavailable');
+          setBackendErrorMessage(
+            'Unable to reach the boutique backend server. You can browse pieces while reconnecting.'
+          );
+        }
+      }
+    };
+    void initBoot();
+    return () => {
+      active = false;
+    };
+  }, [loadCatalogFromBackend]);
+
+  // Helper for signed, device-bound owner fetch calls
+  // Signs the canonical API route path while targeting API_BASE_URL in production.
+  const ownerFetch = useCallback(
+    async (path: string, init: RequestInit = {}): Promise<Response> => {
+      const method = (init.method || 'GET').toUpperCase();
+      const signedHeaders = await buildSignedOwnerHeaders(method, path);
+      return fetch(apiUrl(path), {
+        ...init,
+        method,
+        credentials: 'include',
+        headers: {
+          ...signedHeaders,
+          ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+          ...(init.headers as Record<string, string> | undefined),
+        },
+      });
+    },
+    []
+  );
+
+  const handleUnauthorizedOwnerResponse = useCallback(() => {
+    setIsOwnerAuthorized(false);
+    setIsOwnerDashboardOpen(false);
+    setCurrentOwnerDevice(null);
+    setOwnerSecurity(null);
+    setOwnerOrders([]);
+  }, []);
+
+  const refreshOwnerOrders = useCallback(async () => {
+    setIsLoadingOwnerOrders(true);
+    try {
+      const res = await ownerFetch('/api/owner/orders');
+      if (res.status === 401 || res.status === 403) {
+        handleUnauthorizedOwnerResponse();
+        return;
+      }
+      if (!res.ok) return;
+      const data = (await res.json()) as { orders?: OrderRecord[] };
+      if (Array.isArray(data.orders)) {
+        setOwnerOrders(data.orders);
+      }
+    } finally {
+      setIsLoadingOwnerOrders(false);
+    }
+  }, [handleUnauthorizedOwnerResponse, ownerFetch]);
+
+  const refreshOwnerSecurity = useCallback(async () => {
+    try {
+      const res = await ownerFetch('/api/owner/security/devices');
+      if (res.status === 401 || res.status === 403) {
+        handleUnauthorizedOwnerResponse();
+        return;
+      }
+      if (!res.ok) return;
+      const data = (await res.json()) as { security?: OwnerSecuritySummary };
+      if (data.security) {
+        setOwnerSecurity(data.security);
+      }
+    } catch {
+      // Ignore transient failure
+    }
+  }, [handleUnauthorizedOwnerResponse, ownerFetch]);
+
+  // Verify whether current device already holds a valid bound owner session on boot
+  useEffect(() => {
+    let active = true;
+    const verifyDeviceSession = async () => {
+      try {
+        const res = await ownerFetch('/api/owner/session');
+        if (!active) return;
+        if (res.ok) {
+          const data = (await res.json()) as OwnerSessionInfo;
+          if (data.authorized && data.currentDevice) {
+            setIsOwnerAuthorized(true);
+            setCurrentOwnerDevice(data.currentDevice);
+            setIsOwnerDashboardOpen(true);
+            void refreshOwnerOrders();
+            void refreshOwnerSecurity();
+          }
+        }
+      } catch {
+        // Normal unauthenticated customer session
+      }
+    };
+    void verifyDeviceSession();
+    return () => {
+      active = false;
+    };
+  }, [ownerFetch, refreshOwnerOrders, refreshOwnerSecurity]);
+
   // Initialize customer session token in memory
   useEffect(() => {
     let active = true;
     const initCustomerSession = async () => {
       try {
-        const res = await fetch('/api/customer/session', { method: 'POST' });
+        const res = await fetch(apiUrl('/api/customer/session'), { method: 'POST' });
         if (!res.ok) return;
         const data = (await res.json()) as { customerToken?: string };
         if (active && data.customerToken) {
           setCustomerToken(data.customerToken);
+          setBackendStatus('connected');
+          setBackendErrorMessage(null);
         }
       } catch {
         // Handled when making order or sync calls
@@ -236,16 +572,24 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const ensureCustomerToken = useCallback(async (): Promise<string | null> => {
     if (customerTokenRef.current) return customerTokenRef.current;
     try {
-      const res = await fetch('/api/customer/session', { method: 'POST' });
-      if (!res.ok) return null;
+      const res = await fetch(apiUrl('/api/customer/session'), { method: 'POST' });
+      if (!res.ok) {
+        setBackendStatus('unavailable');
+        setBackendErrorMessage('Unable to reach the boutique backend service.');
+        return null;
+      }
       const data = (await res.json()) as { customerToken?: string };
       if (data.customerToken) {
         setCustomerToken(data.customerToken);
         customerTokenRef.current = data.customerToken;
+        setBackendStatus('connected');
+        setBackendErrorMessage(null);
         return data.customerToken;
       }
       return null;
     } catch {
+      setBackendStatus('unavailable');
+      setBackendErrorMessage('Unable to reach the boutique backend service.');
       return null;
     }
   }, []);
@@ -255,14 +599,25 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (!token) return;
     setIsLoadingOrders(true);
     try {
-      const res = await fetch('/api/orders', {
+      const res = await fetch(apiUrl('/api/orders'), {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (res.status >= 500) {
+          setBackendStatus('unavailable');
+          setBackendErrorMessage('Order service returned a server error.');
+        }
+        return;
+      }
       const data = (await res.json()) as { orders?: OrderRecord[] };
       if (Array.isArray(data.orders)) {
         setOrders(data.orders);
       }
+      setBackendStatus('connected');
+      setBackendErrorMessage(null);
+    } catch {
+      setBackendStatus('unavailable');
+      setBackendErrorMessage('Unable to reach the order service.');
     } finally {
       setIsLoadingOrders(false);
     }
@@ -270,23 +625,33 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const refreshNotifications = useCallback(async () => {
     const token = await ensureCustomerToken();
-    if (!token) return;
+    if (!token) {
+      setNotificationsError('Unable to reach notification service. Please check your connection.');
+      return;
+    }
     setNotificationsError(null);
     setIsLoadingNotifications(true);
     try {
-      const res = await fetch('/api/notifications', {
+      const res = await fetch(apiUrl('/api/notifications'), {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
         setNotificationsError('Unable to load notifications right now.');
+        if (res.status >= 500) {
+          setBackendStatus('unavailable');
+        }
         return;
       }
       const data = (await res.json()) as { notifications?: NotificationItem[] };
       if (Array.isArray(data.notifications)) {
         setNotifications(data.notifications);
       }
+      setBackendStatus('connected');
+      setBackendErrorMessage(null);
     } catch {
       setNotificationsError('Unable to reach notification service.');
+      setBackendStatus('unavailable');
+      setBackendErrorMessage('Unable to reach the boutique notification service.');
     } finally {
       setIsLoadingNotifications(false);
     }
@@ -298,7 +663,7 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     void refreshNotifications();
   }, [customerToken, refreshOrders, refreshNotifications]);
 
-  // Customer WebSocket connection for real-time order updates & notifications
+  // Customer WebSocket connection (order updates, catalog updates & announcements)
   useEffect(() => {
     if (!customerToken) return;
     let closedByCleanup = false;
@@ -307,8 +672,7 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const connect = () => {
       if (closedByCleanup) return;
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
+      socket = new WebSocket(wsUrl('/ws'));
 
       socket.addEventListener('open', () => {
         socket?.send(JSON.stringify({ type: 'auth', role: 'customer', token: customerToken }));
@@ -320,6 +684,10 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             type?: string;
             order?: OrderRecord;
             notification?: NotificationItem;
+            products?: Product[];
+            collections?: Collection[];
+            campaigns?: EditorialCampaign[];
+            storeSettings?: StoreSettings;
           };
           if (payload.type === 'order:updated' && payload.order) {
             setOrders((prev) => upsertOrder(prev, payload.order!));
@@ -339,6 +707,11 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 }
               }
             }
+          } else if (payload.type === 'catalog:updated') {
+            applyCatalogSnapshot(payload);
+          } else if (payload.type === 'boutique:announcement' && payload.notification) {
+            setNotifications((prev) => upsertNotification(prev, payload.notification!));
+            showToast(payload.notification.title);
           }
         } catch {
           // Ignore malformed message
@@ -358,22 +731,32 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       socket?.close();
     };
-  }, [customerToken, showToast]);
+  }, [applyCatalogSnapshot, customerToken, showToast]);
 
-  // Owner WebSocket connection for real-time new order requests
+  // Authorized Owner Device WebSocket (authenticated via HttpOnly cookie or Keystore token + deviceId)
   useEffect(() => {
-    if (!isOwnerAuthenticated || !ownerToken) return;
+    if (!isOwnerAuthorized) return;
     let closedByCleanup = false;
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
 
-    const connect = () => {
+    const connect = async () => {
       if (closedByCleanup) return;
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
+      const identity = await getOrCreateDeviceIdentity();
+      const nativeToken = await getNativeOwnerToken();
+      if (closedByCleanup) return;
+
+      socket = new WebSocket(wsUrl('/ws'));
 
       socket.addEventListener('open', () => {
-        socket?.send(JSON.stringify({ type: 'auth', role: 'owner', token: ownerToken }));
+        socket?.send(
+          JSON.stringify({
+            type: 'auth',
+            role: 'owner',
+            deviceId: identity.deviceId,
+            ...(nativeToken ? { token: nativeToken } : {}),
+          })
+        );
       });
 
       socket.addEventListener('message', (event) => {
@@ -381,46 +764,44 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           const payload = JSON.parse(String(event.data)) as {
             type?: string;
             order?: OrderRecord;
+            products?: Product[];
+            collections?: Collection[];
+            campaigns?: EditorialCampaign[];
+            storeSettings?: StoreSettings;
           };
           if (payload.type === 'owner:order_created' && payload.order) {
             setOwnerOrders((prev) => upsertOrder(prev, payload.order!));
             showToast(`New order request ${payload.order.orderReference}`);
           } else if (payload.type === 'owner:order_updated' && payload.order) {
             setOwnerOrders((prev) => upsertOrder(prev, payload.order!));
+          } else if (payload.type === 'catalog:updated') {
+            applyCatalogSnapshot(payload);
           }
         } catch {
           // Ignore malformed frame
         }
       });
 
-      socket.addEventListener('close', () => {
+      socket.addEventListener('close', (ev) => {
+        if (ev.code === 4003) {
+          // Device was revoked by the other authorized phone or backend recovery
+          void clearNativeOwnerToken();
+          handleUnauthorizedOwnerResponse();
+          return;
+        }
         if (!closedByCleanup) {
-          reconnectTimer = window.setTimeout(connect, 3000);
+          reconnectTimer = window.setTimeout(() => void connect(), 3000);
         }
       });
     };
 
-    connect();
+    void connect();
     return () => {
       closedByCleanup = true;
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       socket?.close();
     };
-  }, [isOwnerAuthenticated, ownerToken, showToast]);
-
-  useEffect(() => {
-    const handleHashOrPop = () => {
-      if (isOwnerUrlEntry()) {
-        setRoute('owner');
-      }
-    };
-    window.addEventListener('hashchange', handleHashOrPop);
-    window.addEventListener('popstate', handleHashOrPop);
-    return () => {
-      window.removeEventListener('hashchange', handleHashOrPop);
-      window.removeEventListener('popstate', handleHashOrPop);
-    };
-  }, []);
+  }, [applyCatalogSnapshot, handleUnauthorizedOwnerResponse, isOwnerAuthorized, showToast]);
 
   useEffect(() => {
     if (!toastMessage) return;
@@ -430,19 +811,25 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const navigate = useCallback(
     (nextRoute: AppRoute, options?: { productId?: string; category?: CategorySlug }) => {
+      const nextProductId = options?.productId ?? selectedProductId;
       if (options?.productId) {
         setSelectedProductId(options.productId);
       }
       if (options?.category) {
         setActiveCategory(options.category);
       }
-      if (nextRoute !== 'owner' && typeof window !== 'undefined' && isOwnerUrlEntry()) {
-        window.history.replaceState(null, '', '/');
+      // Never allow route='owner' via customer navigation
+      const safeRoute: AppRoute = nextRoute === 'owner' ? 'home' : nextRoute;
+      setIsOwnerDashboardOpen(false);
+      setRoute(safeRoute);
+      if (typeof window !== 'undefined') {
+        const nextUrl = buildUrlForRoute(safeRoute, nextProductId);
+        if (window.location.pathname !== nextUrl) {
+          window.history.replaceState(null, '', nextUrl);
+        }
       }
-      setRoute(nextRoute);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
     },
-    []
+    [selectedProductId]
   );
 
   const resetExploreFilters = useCallback(() => {
@@ -523,10 +910,10 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const cartSubtotalUsd = useMemo(() => {
     return cart.reduce((sum, item) => {
-      const prod = PRODUCTS.find((p) => p.id === item.productId);
+      const prod = products.find((p) => p.id === item.productId);
       return sum + (prod ? prod.priceUsd * item.quantity : 0);
     }, 0);
-  }, [cart]);
+  }, [cart, products]);
 
   const submitOrderRequest = useCallback(
     async (payload: OrderRequestPayload): Promise<OrderSubmissionResult> => {
@@ -539,7 +926,7 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
 
       try {
-        const response = await fetch('/api/orders', {
+        const response = await fetch(apiUrl('/api/orders'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -571,6 +958,8 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           order: data.order,
         };
       } catch {
+        setBackendStatus('unavailable');
+        setBackendErrorMessage('Unable to reach the boutique order service.');
         return {
           status: 'error',
           message: 'Network error while submitting your order request. Please try again.',
@@ -606,6 +995,21 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [showToast]
   );
 
+  const updateAddress = useCallback(
+    (id: string, patch: Omit<SavedAddress, 'id'>) => {
+      setAddresses((prev) =>
+        prev.map((a) => {
+          if (a.id === id) {
+            return { ...patch, id };
+          }
+          return patch.isDefault ? { ...a, isDefault: false } : a;
+        })
+      );
+      showToast('Delivery address updated');
+    },
+    [showToast]
+  );
+
   const removeAddress = useCallback(
     (id: string) => {
       setAddresses((prev) => prev.filter((a) => a.id !== id));
@@ -622,12 +1026,58 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [showToast]
   );
 
+  const retrieveGuestOrder = useCallback(
+    async (
+      orderReference: string,
+      phone: string
+    ): Promise<{ ok: boolean; order?: OrderRecord; error?: string }> => {
+      const token = await ensureCustomerToken();
+      if (!token) {
+        return { ok: false, error: 'Unable to initialize your session. Please try again.' };
+      }
+      try {
+        const res = await fetch(apiUrl('/api/orders/retrieve'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ orderReference: orderReference.trim(), phone: phone.trim() }),
+        });
+        const data = (await res.json()) as {
+          order?: OrderRecord;
+          notifications?: NotificationItem[];
+          error?: string;
+        };
+        if (!res.ok || !data.order) {
+          return { ok: false, error: data.error ?? 'Order could not be verified.' };
+        }
+        setOrders((prev) => upsertOrder(prev, data.order!));
+        if (Array.isArray(data.notifications)) {
+          setNotifications((prev) => {
+            let next = [...prev];
+            for (const notif of data.notifications!) {
+              next = upsertNotification(next, notif);
+            }
+            return next;
+          });
+        }
+        showToast(`Retrieved order ${data.order.orderReference}`);
+        return { ok: true, order: data.order };
+      } catch {
+        setBackendStatus('unavailable');
+        return { ok: false, error: 'Network error while verifying your order.' };
+      }
+    },
+    [ensureCustomerToken, showToast]
+  );
+
   const markNotificationRead = useCallback(
     (id: string) => {
       setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
       const token = customerTokenRef.current;
-      if (token) {
-        void fetch(`/api/notifications/${encodeURIComponent(id)}/read`, {
+      if (token && !id.startsWith('announcement-')) {
+        void fetch(apiUrl(`/api/notifications/${encodeURIComponent(id)}/read`), {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -640,7 +1090,7 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
     const token = customerTokenRef.current;
     if (token) {
-      void fetch('/api/notifications/read-all', {
+      void fetch(apiUrl('/api/notifications/read-all'), {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -670,129 +1120,192 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [showToast]);
 
   // ---------------------------------------------------------------------------
-  // Owner Auth & Order Management
+  // Private Search-Bar Access & Two-Device Owner Management
   // ---------------------------------------------------------------------------
-  const refreshOwnerAuthStatus = useCallback(async () => {
+  const attemptSecretOwnerAccess = useCallback(
+    async (candidateCode: string): Promise<boolean> => {
+      const trimmed = candidateCode.trim();
+      // Only probe backend when input resembles a continuous access token (>= 10 chars, no whitespace)
+      // so ordinary boutique shopping queries never interfere or suffer latency.
+      if (trimmed.length < 10 || /\s/.test(trimmed)) {
+        return false;
+      }
+
+      try {
+        const identity = await getOrCreateDeviceIdentity();
+        const res = await fetch(apiUrl('/api/owner/device/enroll'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'VEYRASHA-Client',
+          },
+          body: JSON.stringify({
+            code: trimmed,
+            deviceId: identity.deviceId,
+            deviceLabel: identity.deviceLabel,
+            platform: identity.platform,
+            publicKeyJwk: identity.publicKeyJwk,
+          }),
+        });
+
+        if (!res.ok) {
+          return false;
+        }
+
+        const data = (await res.json()) as {
+          authorized?: boolean;
+          currentDevice?: OwnerDeviceSummary;
+          nativeDeviceToken?: string;
+        };
+
+        if (!data.authorized || !data.currentDevice) {
+          return false;
+        }
+
+        if (data.nativeDeviceToken) {
+          await saveNativeOwnerToken(data.nativeDeviceToken);
+        }
+
+        setIsOwnerAuthorized(true);
+        setCurrentOwnerDevice(data.currentDevice);
+        setIsOwnerDashboardOpen(true);
+        setSearchQuery('');
+        void refreshOwnerOrders();
+        void refreshOwnerSecurity();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [refreshOwnerOrders, refreshOwnerSecurity]
+  );
+
+  const openOwnerDashboard = useCallback(() => {
+    if (!isOwnerAuthorized) return;
+    setIsOwnerDashboardOpen(true);
+    void refreshOwnerOrders();
+    void refreshOwnerSecurity();
+  }, [isOwnerAuthorized, refreshOwnerOrders, refreshOwnerSecurity]);
+
+  const closeOwnerDashboard = useCallback(() => {
+    setIsOwnerDashboardOpen(false);
+  }, []);
+
+  const rotateCurrentOwnerToken = useCallback(async (): Promise<{
+    ok: boolean;
+    error?: string;
+  }> => {
     try {
-      const res = await fetch('/api/owner/auth-status');
-      if (!res.ok) return;
-      const status = (await res.json()) as OwnerAuthStatus;
-      setOwnerAuthStatus(status);
+      const res = await ownerFetch('/api/owner/security/rotate-token', { method: 'POST' });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        nativeDeviceToken?: string;
+        currentDevice?: OwnerDeviceSummary;
+        error?: string;
+      };
+      if (!res.ok || !data.ok) {
+        return { ok: false, error: data.error ?? 'Unable to rotate device token.' };
+      }
+      if (data.nativeDeviceToken) {
+        await saveNativeOwnerToken(data.nativeDeviceToken);
+      }
+      if (data.currentDevice) {
+        setCurrentOwnerDevice(data.currentDevice);
+      }
+      void refreshOwnerSecurity();
+      showToast('Device token rotated');
+      return { ok: true };
     } catch {
-      // Ignore transient network errors
+      return { ok: false, error: 'Network error while rotating token.' };
     }
-  }, []);
+  }, [ownerFetch, refreshOwnerSecurity, showToast]);
 
-  const refreshOwnerOrders = useCallback(async () => {
-    const token = ownerTokenRef.current;
-    if (!token) return;
-    setIsLoadingOwnerOrders(true);
+  const revokeAuthorizedDevice = useCallback(
+    async (slot: OwnerDeviceSlot): Promise<{ ok: boolean; error?: string }> => {
+      try {
+        const res = await ownerFetch(`/api/owner/security/devices/${slot}/revoke`, {
+          method: 'POST',
+        });
+        const data = (await res.json()) as {
+          ok?: boolean;
+          revokedSelf?: boolean;
+          security?: OwnerSecuritySummary;
+          error?: string;
+        };
+        if (!res.ok || !data.ok) {
+          return { ok: false, error: data.error ?? 'Unable to revoke device.' };
+        }
+        if (data.revokedSelf) {
+          await clearNativeOwnerToken();
+          handleUnauthorizedOwnerResponse();
+          showToast('This device access has been revoked');
+          return { ok: true };
+        }
+        if (data.security) {
+          setOwnerSecurity(data.security);
+        }
+        showToast(`Device slot ${slot} revoked`);
+        return { ok: true };
+      } catch {
+        return { ok: false, error: 'Network error while revoking device.' };
+      }
+    },
+    [handleUnauthorizedOwnerResponse, ownerFetch, showToast]
+  );
+
+  const generateReplacementDeviceCode = useCallback(
+    async (
+      targetSlot: OwnerDeviceSlot
+    ): Promise<{ ok: boolean; code?: string; expiresAt?: string; error?: string }> => {
+      try {
+        const res = await ownerFetch('/api/owner/security/replacement-code', {
+          method: 'POST',
+          body: JSON.stringify({ targetSlot }),
+        });
+        const data = (await res.json()) as {
+          code?: string;
+          expiresAt?: string;
+          security?: OwnerSecuritySummary;
+          error?: string;
+        };
+        if (!res.ok || !data.code) {
+          return { ok: false, error: data.error ?? 'Unable to generate replacement code.' };
+        }
+        if (data.security) {
+          setOwnerSecurity(data.security);
+        }
+        showToast(`One-time replacement code generated for slot ${targetSlot}`);
+        return { ok: true, code: data.code, expiresAt: data.expiresAt };
+      } catch {
+        return { ok: false, error: 'Network error while generating replacement code.' };
+      }
+    },
+    [ownerFetch, showToast]
+  );
+
+  const signOutOwnerSession = useCallback(async () => {
     try {
-      const res = await fetch('/api/owner/orders', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return;
-      const data = (await res.json()) as { orders?: OrderRecord[] };
-      if (Array.isArray(data.orders)) {
-        setOwnerOrders(data.orders);
-      }
-    } finally {
-      setIsLoadingOwnerOrders(false);
+      await ownerFetch('/api/owner/security/logout', { method: 'POST' });
+    } catch {
+      // Ignore transient failure
     }
-  }, []);
+    await clearNativeOwnerToken();
+    handleUnauthorizedOwnerResponse();
+    setRoute('home');
+  }, [handleUnauthorizedOwnerResponse, ownerFetch]);
 
-  const setupOwnerAccount = useCallback(
-    async (emailInput: string, passwordInput: string): Promise<OwnerAuthResult> => {
-      try {
-        const res = await fetch('/api/owner/setup', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: emailInput.trim(), password: passwordInput }),
-        });
-        const data = (await res.json()) as OwnerAuthResult;
-        if (res.ok && data.authenticated && data.token) {
-          setOwnerToken(data.token);
-          ownerTokenRef.current = data.token;
-          setIsOwnerAuthenticated(true);
-          setOwnerEmail(data.email ?? emailInput.trim());
-          void refreshOwnerAuthStatus();
-          void refreshOwnerOrders();
-          return data;
-        }
-        return { authenticated: false, error: data.error ?? 'Setup failed.' };
-      } catch {
-        return { authenticated: false, error: 'Unable to reach server.' };
-      }
-    },
-    [refreshOwnerAuthStatus, refreshOwnerOrders]
-  );
-
-  const authenticateOwner = useCallback(
-    async (emailInput: string, passwordInput: string): Promise<OwnerAuthResult> => {
-      const trimmedEmail = emailInput.trim();
-      if (!trimmedEmail || !passwordInput) {
-        return {
-          authenticated: false,
-          error: 'Please enter both your owner email and password.',
-        };
-      }
-
-      try {
-        const response = await fetch('/api/owner/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: trimmedEmail, password: passwordInput }),
-        });
-
-        const data = (await response.json()) as OwnerAuthResult;
-
-        if (response.ok && data.authenticated && data.token) {
-          setOwnerToken(data.token);
-          ownerTokenRef.current = data.token;
-          setIsOwnerAuthenticated(true);
-          setOwnerEmail(data.email ?? trimmedEmail);
-          void refreshOwnerOrders();
-          return data;
-        }
-
-        return {
-          authenticated: false,
-          error: data.error ?? 'Invalid owner credentials or unauthorized account.',
-        };
-      } catch {
-        return {
-          authenticated: false,
-          error:
-            'Unable to reach the owner authentication service. Verify the server is running.',
-        };
-      }
-    },
-    [refreshOwnerOrders]
-  );
-
-  const signOutOwner = useCallback(() => {
-    setOwnerToken(null);
-    ownerTokenRef.current = null;
-    setIsOwnerAuthenticated(false);
-    setOwnerEmail(null);
-    setOwnerOrders([]);
-    showToast('Signed out of Owner Workspace');
-  }, [showToast]);
-
+  // ---------------------------------------------------------------------------
+  // Owner Order & Catalog Management Mutations
+  // ---------------------------------------------------------------------------
   const acceptOwnerOrder = useCallback(
     async (
       orderId: string,
       payload: { deliveryFeeUsd: number; estimatedDeliveryTime: string; ownerMessage?: string }
     ): Promise<{ ok: boolean; error?: string; order?: OrderRecord }> => {
-      const token = ownerTokenRef.current;
-      if (!token) return { ok: false, error: 'Owner authentication required.' };
       try {
-        const res = await fetch(`/api/owner/orders/${encodeURIComponent(orderId)}/accept`, {
+        const res = await ownerFetch(`/api/owner/orders/${encodeURIComponent(orderId)}/accept`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
           body: JSON.stringify(payload),
         });
         const data = (await res.json()) as { order?: OrderRecord; error?: string };
@@ -806,7 +1319,7 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return { ok: false, error: 'Network error while accepting order.' };
       }
     },
-    [showToast]
+    [ownerFetch, showToast]
   );
 
   const updateOwnerOrderStatus = useCallback(
@@ -814,15 +1327,9 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       orderId: string,
       payload: { status: OrderStatus; estimatedDeliveryTime?: string; ownerMessage?: string }
     ): Promise<{ ok: boolean; error?: string; order?: OrderRecord }> => {
-      const token = ownerTokenRef.current;
-      if (!token) return { ok: false, error: 'Owner authentication required.' };
       try {
-        const res = await fetch(`/api/owner/orders/${encodeURIComponent(orderId)}/status`, {
+        const res = await ownerFetch(`/api/owner/orders/${encodeURIComponent(orderId)}/status`, {
           method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
           body: JSON.stringify(payload),
         });
         const data = (await res.json()) as { order?: OrderRecord; error?: string };
@@ -836,7 +1343,7 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return { ok: false, error: 'Network error while updating order status.' };
       }
     },
-    [showToast]
+    [ownerFetch, showToast]
   );
 
   const updateOwnerPaymentStatus = useCallback(
@@ -844,15 +1351,9 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       orderId: string,
       paymentStatus: PaymentStatus
     ): Promise<{ ok: boolean; error?: string; order?: OrderRecord }> => {
-      const token = ownerTokenRef.current;
-      if (!token) return { ok: false, error: 'Owner authentication required.' };
       try {
-        const res = await fetch(`/api/owner/orders/${encodeURIComponent(orderId)}/payment`, {
+        const res = await ownerFetch(`/api/owner/orders/${encodeURIComponent(orderId)}/payment`, {
           method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
           body: JSON.stringify({ paymentStatus }),
         });
         const data = (await res.json()) as { order?: OrderRecord; error?: string };
@@ -866,16 +1367,227 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return { ok: false, error: 'Network error while updating payment status.' };
       }
     },
-    [showToast]
+    [ownerFetch, showToast]
+  );
+
+  const createOwnerProduct = useCallback(
+    async (
+      payload: ProductMutationInput
+    ): Promise<{ ok: boolean; error?: string; product?: Product }> => {
+      try {
+        const res = await ownerFetch('/api/owner/products', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        const data = (await res.json()) as {
+          product?: Product;
+          products?: Product[];
+          collections?: Collection[];
+          campaigns?: EditorialCampaign[];
+          storeSettings?: StoreSettings;
+          error?: string;
+        };
+        if (!res.ok || !data.product) {
+          return { ok: false, error: data.error ?? 'Unable to create product.' };
+        }
+        applyCatalogSnapshot(data);
+        showToast(`Added ${data.product.name} to catalog`);
+        return { ok: true, product: data.product };
+      } catch {
+        return { ok: false, error: 'Network error while creating product.' };
+      }
+    },
+    [applyCatalogSnapshot, ownerFetch, showToast]
+  );
+
+  const updateOwnerProduct = useCallback(
+    async (
+      productId: string,
+      payload: Partial<ProductMutationInput>
+    ): Promise<{ ok: boolean; error?: string; product?: Product }> => {
+      try {
+        const res = await ownerFetch(`/api/owner/products/${encodeURIComponent(productId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+        const data = (await res.json()) as {
+          product?: Product;
+          products?: Product[];
+          collections?: Collection[];
+          campaigns?: EditorialCampaign[];
+          storeSettings?: StoreSettings;
+          error?: string;
+        };
+        if (!res.ok || !data.product) {
+          return { ok: false, error: data.error ?? 'Unable to update product.' };
+        }
+        applyCatalogSnapshot(data);
+        showToast(`Saved changes to ${data.product.name}`);
+        return { ok: true, product: data.product };
+      } catch {
+        return { ok: false, error: 'Network error while updating product.' };
+      }
+    },
+    [applyCatalogSnapshot, ownerFetch, showToast]
+  );
+
+  const deleteOwnerProduct = useCallback(
+    async (productId: string): Promise<{ ok: boolean; error?: string }> => {
+      try {
+        const res = await ownerFetch(`/api/owner/products/${encodeURIComponent(productId)}`, {
+          method: 'DELETE',
+        });
+        const data = (await res.json()) as {
+          ok?: boolean;
+          products?: Product[];
+          error?: string;
+        };
+        if (!res.ok || !data.ok) {
+          return { ok: false, error: data.error ?? 'Unable to remove product.' };
+        }
+        applyCatalogSnapshot(data);
+        showToast('Product removed from catalog');
+        return { ok: true };
+      } catch {
+        return { ok: false, error: 'Network error while removing product.' };
+      }
+    },
+    [applyCatalogSnapshot, ownerFetch, showToast]
+  );
+
+  const updateOwnerInventory = useCallback(
+    async (productId: string, stockCount: number): Promise<{ ok: boolean; error?: string }> => {
+      try {
+        const res = await ownerFetch(
+          `/api/owner/products/${encodeURIComponent(productId)}/inventory`,
+          {
+            method: 'PATCH',
+            body: JSON.stringify({ stockCount }),
+          }
+        );
+        const data = (await res.json()) as {
+          product?: Product;
+          products?: Product[];
+          error?: string;
+        };
+        if (!res.ok || !data.product) {
+          return { ok: false, error: data.error ?? 'Unable to update inventory.' };
+        }
+        applyCatalogSnapshot(data);
+        showToast(`Updated stock for ${data.product.name}`);
+        return { ok: true };
+      } catch {
+        return { ok: false, error: 'Network error while updating inventory.' };
+      }
+    },
+    [applyCatalogSnapshot, ownerFetch, showToast]
+  );
+
+  const updateOwnerCampaign = useCallback(
+    async (
+      campaignId: string,
+      payload: Partial<EditorialCampaign>
+    ): Promise<{ ok: boolean; error?: string }> => {
+      try {
+        const res = await ownerFetch(`/api/owner/campaigns/${encodeURIComponent(campaignId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+        const data = (await res.json()) as {
+          campaigns?: EditorialCampaign[];
+          error?: string;
+        };
+        if (!res.ok) {
+          return { ok: false, error: data.error ?? 'Unable to update campaign.' };
+        }
+        applyCatalogSnapshot(data);
+        showToast('Editorial campaign updated');
+        return { ok: true };
+      } catch {
+        return { ok: false, error: 'Network error while updating campaign.' };
+      }
+    },
+    [applyCatalogSnapshot, ownerFetch, showToast]
+  );
+
+  const updateOwnerCollection = useCallback(
+    async (
+      collectionId: string,
+      payload: Partial<Collection>
+    ): Promise<{ ok: boolean; error?: string }> => {
+      try {
+        const res = await ownerFetch(`/api/owner/collections/${encodeURIComponent(collectionId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+        const data = (await res.json()) as {
+          collections?: Collection[];
+          error?: string;
+        };
+        if (!res.ok) {
+          return { ok: false, error: data.error ?? 'Unable to update collection.' };
+        }
+        applyCatalogSnapshot(data);
+        showToast('Featured capsule updated');
+        return { ok: true };
+      } catch {
+        return { ok: false, error: 'Network error while updating collection.' };
+      }
+    },
+    [applyCatalogSnapshot, ownerFetch, showToast]
+  );
+
+  const publishOwnerAnnouncement = useCallback(
+    async (title: string, message: string): Promise<{ ok: boolean; error?: string }> => {
+      try {
+        const res = await ownerFetch('/api/owner/announcements', {
+          method: 'POST',
+          body: JSON.stringify({ title, message }),
+        });
+        const data = (await res.json()) as { error?: string };
+        if (!res.ok) {
+          return { ok: false, error: data.error ?? 'Unable to publish announcement.' };
+        }
+        showToast('Boutique announcement sent to clients');
+        return { ok: true };
+      } catch {
+        return { ok: false, error: 'Network error while publishing announcement.' };
+      }
+    },
+    [ownerFetch, showToast]
+  );
+
+  const updateOwnerStoreSettings = useCallback(
+    async (patch: Partial<StoreSettings>): Promise<{ ok: boolean; error?: string }> => {
+      try {
+        const res = await ownerFetch('/api/owner/settings', {
+          method: 'PUT',
+          body: JSON.stringify(patch),
+        });
+        const data = (await res.json()) as {
+          storeSettings?: StoreSettings;
+          error?: string;
+        };
+        if (!res.ok) {
+          return { ok: false, error: data.error ?? 'Unable to save boutique settings.' };
+        }
+        applyCatalogSnapshot(data);
+        showToast('Boutique settings saved');
+        return { ok: true };
+      } catch {
+        return { ok: false, error: 'Network error while saving settings.' };
+      }
+    },
+    [applyCatalogSnapshot, ownerFetch, showToast]
   );
 
   const retryCatalogLoad = useCallback(() => {
     setCatalogError(null);
     setIsCatalogLoading(true);
-    window.setTimeout(() => {
+    void checkBackendHealth().finally(() => {
       setIsCatalogLoading(false);
-    }, 450);
-  }, []);
+    });
+  }, [checkBackendHealth]);
 
   const simulateCatalogError = useCallback(() => {
     setCatalogError(
@@ -897,6 +1609,9 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       sortBy,
       setSortBy,
       resetExploreFilters,
+      products,
+      collections,
+      campaigns,
       storeSettings,
       currency,
       setCurrency,
@@ -917,11 +1632,13 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       updateCustomer,
       addresses,
       addAddress,
+      updateAddress,
       removeAddress,
       setDefaultAddress,
       orders,
       isLoadingOrders,
       refreshOrders,
+      retrieveGuestOrder,
       notifications,
       unreadNotificationCount,
       isLoadingNotifications,
@@ -931,19 +1648,35 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       markAllNotificationsRead,
       browserNotificationPermission,
       requestBrowserNotifications,
-      isOwnerAuthenticated,
-      ownerEmail,
-      ownerAuthStatus,
-      refreshOwnerAuthStatus,
-      setupOwnerAccount,
-      authenticateOwner,
-      signOutOwner,
+      isOwnerAuthorized,
+      isOwnerDashboardOpen,
+      currentOwnerDevice,
+      ownerSecurity,
+      attemptSecretOwnerAccess,
+      openOwnerDashboard,
+      closeOwnerDashboard,
+      refreshOwnerSecurity,
+      rotateCurrentOwnerToken,
+      revokeAuthorizedDevice,
+      generateReplacementDeviceCode,
+      signOutOwnerSession,
       ownerOrders,
       isLoadingOwnerOrders,
       refreshOwnerOrders,
       acceptOwnerOrder,
       updateOwnerOrderStatus,
       updateOwnerPaymentStatus,
+      createOwnerProduct,
+      updateOwnerProduct,
+      deleteOwnerProduct,
+      updateOwnerInventory,
+      updateOwnerCampaign,
+      updateOwnerCollection,
+      publishOwnerAnnouncement,
+      updateOwnerStoreSettings,
+      backendStatus,
+      backendErrorMessage,
+      checkBackendHealth,
       toastMessage,
       showToast,
       isCatalogLoading,
@@ -960,6 +1693,9 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       priceBand,
       sortBy,
       resetExploreFilters,
+      products,
+      collections,
+      campaigns,
       storeSettings,
       currency,
       wishlistIds,
@@ -978,11 +1714,13 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       updateCustomer,
       addresses,
       addAddress,
+      updateAddress,
       removeAddress,
       setDefaultAddress,
       orders,
       isLoadingOrders,
       refreshOrders,
+      retrieveGuestOrder,
       notifications,
       unreadNotificationCount,
       isLoadingNotifications,
@@ -992,19 +1730,35 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       markAllNotificationsRead,
       browserNotificationPermission,
       requestBrowserNotifications,
-      isOwnerAuthenticated,
-      ownerEmail,
-      ownerAuthStatus,
-      refreshOwnerAuthStatus,
-      setupOwnerAccount,
-      authenticateOwner,
-      signOutOwner,
+      isOwnerAuthorized,
+      isOwnerDashboardOpen,
+      currentOwnerDevice,
+      ownerSecurity,
+      attemptSecretOwnerAccess,
+      openOwnerDashboard,
+      closeOwnerDashboard,
+      refreshOwnerSecurity,
+      rotateCurrentOwnerToken,
+      revokeAuthorizedDevice,
+      generateReplacementDeviceCode,
+      signOutOwnerSession,
       ownerOrders,
       isLoadingOwnerOrders,
       refreshOwnerOrders,
       acceptOwnerOrder,
       updateOwnerOrderStatus,
       updateOwnerPaymentStatus,
+      createOwnerProduct,
+      updateOwnerProduct,
+      deleteOwnerProduct,
+      updateOwnerInventory,
+      updateOwnerCampaign,
+      updateOwnerCollection,
+      publishOwnerAnnouncement,
+      updateOwnerStoreSettings,
+      backendStatus,
+      backendErrorMessage,
+      checkBackendHealth,
       toastMessage,
       showToast,
       isCatalogLoading,

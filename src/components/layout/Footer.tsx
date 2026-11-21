@@ -5,7 +5,7 @@ export const Footer: React.FC = () => {
   const { navigate } = useBoutique();
 
   return (
-    <footer className="mt-16 border-t border-[#E4D8C5] bg-[#EFE7DA]/60 pb-24 md:pb-12">
+    <footer className="mt-16 border-t border-[#E4D8C5] bg-[#EFE7DA]/60 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] md:pb-12">
       <div className="mx-auto grid max-w-7xl grid-cols-1 gap-10 px-4 py-12 sm:px-6 md:grid-cols-4">
         <div className="md:col-span-2">
           <p className="font-serif text-xl tracking-[0.14em] text-[#302923]">VEY RASHA</p>

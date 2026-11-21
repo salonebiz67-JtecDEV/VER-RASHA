@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: vey-rasha-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: FRONTEND_URL
+        sync: false
+      - key: OWNER_ENROLLMENT_CODE_1
+        sync: false
+      - key: OWNER_ENROLLMENT_CODE_2
+        sync: false
+      - key: OWNER_RECOVERY_SECRET
+        sync: false

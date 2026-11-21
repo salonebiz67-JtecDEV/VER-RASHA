@@ -1,28 +1,37 @@
 import React, { useState } from 'react';
 import { ArrowRight, Search } from 'lucide-react';
-import {
-  ASSETS,
-  CATEGORIES,
-  EDITORIAL_CAMPAIGNS,
-  FEATURED_COLLECTIONS,
-  PRODUCTS,
-} from '../../data/catalog';
+import { ASSETS, CATEGORIES } from '../../data/catalog';
 import { useBoutique } from '../../context/BoutiqueContext';
 import { LuxuryImage } from '../ui/LuxuryImage';
 import { ProductCard } from '../ui/ProductCard';
 
 export const HomeView: React.FC = () => {
-  const { navigate, setSearchQuery } = useBoutique();
+  const {
+    navigate,
+    setSearchQuery,
+    products,
+    collections,
+    campaigns,
+    attemptSecretOwnerAccess,
+  } = useBoutique();
   const [localSearch, setLocalSearch] = useState('');
 
-  const newArrivals = PRODUCTS.filter((p) => p.isNewArrival).slice(0, 4);
-  const bestSellers = PRODUCTS.filter((p) => p.isBestSeller).slice(0, 4);
+  const newArrivals = products.filter((p) => p.isNewArrival).slice(0, 4);
+  const bestSellers = products.filter((p) => p.isBestSeller).slice(0, 4);
   const visualCategories = CATEGORIES.filter((cat) => cat.slug !== 'all' && cat.image);
-  const campaign = EDITORIAL_CAMPAIGNS[0];
+  const campaign = campaigns[0];
 
-  const handleSearchSubmit = (e: React.FormEvent) => {
+  const handleSearchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSearchQuery(localSearch.trim());
+    const submitted = localSearch.trim();
+    if (submitted) {
+      const granted = await attemptSecretOwnerAccess(submitted);
+      if (granted) {
+        setLocalSearch('');
+        return;
+      }
+    }
+    setSearchQuery(submitted);
     navigate('explore');
   };
 
@@ -66,7 +75,11 @@ export const HomeView: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={() => navigate('product', { productId: 'vr-aurelia-gown' })}
+                onClick={() =>
+                  navigate('product', {
+                    productId: products[0]?.id ?? 'vr-aurelia-gown',
+                  })
+                }
                 className="inline-flex min-h-[46px] items-center rounded-full border border-[#F6F1E8]/45 bg-[#302923]/45 px-6 py-3 text-xs font-medium tracking-[0.12em] text-[#F6F1E8] uppercase backdrop-blur-sm transition-colors duration-150 hover:bg-[#302923]/75 active:scale-[0.98] whitespace-nowrap"
               >
                 Featured Gown
@@ -78,7 +91,7 @@ export const HomeView: React.FC = () => {
 
       {/* Boutique Search Bar */}
       <section aria-label="Boutique Search" className="!mt-7 sm:!mt-10">
-        <form onSubmit={handleSearchSubmit} className="relative mx-auto max-w-2xl">
+        <form onSubmit={(e) => void handleSearchSubmit(e)} className="relative mx-auto max-w-2xl">
           <Search
             className="pointer-events-none absolute top-1/2 left-4 h-4 w-4 -translate-y-1/2 text-[#665B51]"
             strokeWidth={1.6}
@@ -122,7 +135,7 @@ export const HomeView: React.FC = () => {
 
         <div className="mt-6 flex gap-3.5 overflow-x-auto pb-2 no-scrollbar lg:grid lg:grid-cols-6 lg:gap-4 lg:overflow-visible lg:pb-0">
           {visualCategories.map((cat) => {
-            const itemCount = PRODUCTS.filter((p) => p.category === cat.slug).length;
+            const itemCount = products.filter((p) => p.category === cat.slug).length;
             return (
               <button
                 key={cat.slug}
@@ -191,7 +204,7 @@ export const HomeView: React.FC = () => {
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-3 md:gap-6">
-          {FEATURED_COLLECTIONS.map((col) => (
+          {collections.map((col) => (
             <button
               key={col.id}
               type="button"
@@ -220,7 +233,10 @@ export const HomeView: React.FC = () => {
                 </div>
                 <span className="mt-5 inline-flex items-center gap-1.5 text-xs font-semibold tracking-[0.12em] text-[#302923] uppercase group-hover:text-[#8C6D46] transition-colors">
                   <span>Explore Capsule</span>
-                  <ArrowRight className="h-3.5 w-3.5 transition-transform duration-150 group-hover:translate-x-0.5" strokeWidth={1.75} />
+                  <ArrowRight
+                    className="h-3.5 w-3.5 transition-transform duration-150 group-hover:translate-x-0.5"
+                    strokeWidth={1.75}
+                  />
                 </span>
               </div>
             </button>
@@ -229,40 +245,38 @@ export const HomeView: React.FC = () => {
       </section>
 
       {/* Editorial Campaign Feature */}
-      <section aria-label="Featured Editorial Campaign">
-        <div className="grid overflow-hidden rounded-2xl border border-[#E4D8C5] bg-[#EFE7DA] lg:grid-cols-12 lg:items-stretch sm:rounded-3xl">
-          <div className="lg:col-span-7">
-            <div className="aspect-[16/10] h-full w-full lg:aspect-auto">
-              <LuxuryImage
-                src={campaign.image}
-                alt={campaign.title}
-                className="h-full w-full"
-              />
+      {campaign && (
+        <section aria-label="Featured Editorial Campaign">
+          <div className="grid overflow-hidden rounded-2xl border border-[#E4D8C5] bg-[#EFE7DA] lg:grid-cols-12 lg:items-stretch sm:rounded-3xl">
+            <div className="lg:col-span-7">
+              <div className="aspect-[16/10] h-full w-full lg:aspect-auto">
+                <LuxuryImage src={campaign.image} alt={campaign.title} className="h-full w-full" />
+              </div>
+            </div>
+            <div className="flex flex-col justify-center p-6 sm:p-10 lg:col-span-5 lg:p-12">
+              <p className="text-[11px] font-medium tracking-[0.18em] text-[#8C6D46] uppercase">
+                {campaign.kicker}
+              </p>
+              <h2 className="mt-2 font-serif text-2xl font-medium leading-tight text-[#302923] sm:text-3xl lg:text-4xl">
+                {campaign.title}
+              </h2>
+              <p className="mt-3 text-sm leading-relaxed text-[#665B51] sm:text-[15px]">
+                {campaign.description}
+              </p>
+              <div className="mt-6">
+                <button
+                  type="button"
+                  onClick={() => navigate('explore', { category: campaign.targetCategory })}
+                  className="inline-flex min-h-[46px] items-center gap-2 rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.14em] text-[#F6F1E8] uppercase transition-colors duration-150 hover:bg-[#463D35] active:scale-[0.98] whitespace-nowrap"
+                >
+                  <span>{campaign.ctaLabel}</span>
+                  <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
+                </button>
+              </div>
             </div>
           </div>
-          <div className="flex flex-col justify-center p-6 sm:p-10 lg:col-span-5 lg:p-12">
-            <p className="text-[11px] font-medium tracking-[0.18em] text-[#8C6D46] uppercase">
-              {campaign.kicker}
-            </p>
-            <h2 className="mt-2 font-serif text-2xl font-medium leading-tight text-[#302923] sm:text-3xl lg:text-4xl">
-              {campaign.title}
-            </h2>
-            <p className="mt-3 text-sm leading-relaxed text-[#665B51] sm:text-[15px]">
-              {campaign.description}
-            </p>
-            <div className="mt-6">
-              <button
-                type="button"
-                onClick={() => navigate('explore', { category: campaign.targetCategory })}
-                className="inline-flex min-h-[46px] items-center gap-2 rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.14em] text-[#F6F1E8] uppercase transition-colors duration-150 hover:bg-[#463D35] active:scale-[0.98] whitespace-nowrap"
-              >
-                <span>{campaign.ctaLabel}</span>
-                <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* Best Sellers */}
       <section aria-label="Best Sellers">

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Sparkles } from 'lucide-react';
+import { resolveAssetUrl } from '../../config/api';
 
 interface LuxuryImageProps {
   src: string;
@@ -16,8 +17,14 @@ export const LuxuryImage: React.FC<LuxuryImageProps> = ({
   imgClassName = '',
   loading = 'lazy',
 }) => {
+  const resolvedSrc = resolveAssetUrl(src);
   const [hasError, setHasError] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
+
+  useEffect(() => {
+    setHasError(false);
+    setIsLoaded(false);
+  }, [resolvedSrc]);
 
   if (hasError) {
     return (
@@ -39,7 +46,7 @@ export const LuxuryImage: React.FC<LuxuryImageProps> = ({
         <div className="absolute inset-0 bg-[#EFE7DA] animate-pulse" aria-hidden="true" />
       )}
       <img
-        src={src}
+        src={resolvedSrc}
         alt={alt}
         loading={loading}
         decoding="async"

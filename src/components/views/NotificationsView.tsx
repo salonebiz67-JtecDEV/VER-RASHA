@@ -34,6 +34,9 @@ export const NotificationsView: React.FC = () => {
     browserNotificationPermission,
     requestBrowserNotifications,
     navigate,
+    backendStatus,
+    backendErrorMessage,
+    checkBackendHealth,
   } = useBoutique();
 
   const [filter, setFilter] = useState<NotificationFilter>('all');
@@ -98,6 +101,33 @@ export const NotificationsView: React.FC = () => {
           )}
         </div>
       </div>
+
+      {backendStatus === 'unavailable' && (
+        <div
+          role="status"
+          className="mt-5 flex flex-col items-start justify-between gap-3 rounded-2xl border border-[#D8C3A5] bg-[#EFE7DA] px-5 py-4 text-xs text-[#302923] sm:flex-row sm:items-center"
+        >
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#8C6D46]" />
+            <span>
+              {backendErrorMessage ??
+                'Unable to reach the boutique notification server. Reconnect to load live updates.'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              void checkBackendHealth().then((ok) => {
+                if (ok) void refreshNotifications();
+              });
+            }}
+            className="inline-flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-full border border-[#302923]/30 bg-[#FCF9F4] px-4 py-1.5 text-[11px] font-semibold tracking-wider text-[#302923] uppercase hover:bg-[#F6F1E8]"
+          >
+            <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.6} />
+            <span>Retry Connection</span>
+          </button>
+        </div>
+      )}
 
       {/* Optional User-Initiated Browser Push Notification Opt-In */}
       {browserNotificationPermission === 'default' && (

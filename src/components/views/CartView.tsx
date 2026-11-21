@@ -1,12 +1,12 @@
 import React from 'react';
 import { ArrowRight, Minus, Plus, ShoppingBag, Trash2 } from 'lucide-react';
-import { PRODUCTS } from '../../data/catalog';
 import { useBoutique } from '../../context/BoutiqueContext';
 import { formatPrice } from '../../utils/formatCurrency';
 import { LuxuryImage } from '../ui/LuxuryImage';
 
 export const CartView: React.FC = () => {
   const {
+    products,
     cart,
     cartCount,
     cartSubtotalUsd,
@@ -60,7 +60,7 @@ export const CartView: React.FC = () => {
           {/* Bag Line Items */}
           <div className="space-y-4 lg:col-span-7">
             {cart.map((item) => {
-              const product = PRODUCTS.find((p) => p.id === item.productId);
+              const product = products.find((p) => p.id === item.productId);
               if (!product) return null;
 
               const lineTotalUsd = product.priceUsd * item.quantity;
@@ -180,7 +180,7 @@ export const CartView: React.FC = () => {
           </div>
 
           {/* Bag Summary Panel (No hardcoded delivery region, fee, or invented total) */}
-          <aside className="rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] p-6 sm:p-8 lg:sticky lg:top-24 lg:col-span-5">
+          <aside className="rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] p-6 sm:p-8 lg:sticky lg:top-8 lg:col-span-5">
             <h2 className="font-serif text-2xl font-medium text-[#302923]">Order Summary</h2>
 
             {storeSettings.giftPresentationAvailable && (
