@@ -3,7 +3,7 @@ services:
     name: vey-rasha-api
     runtime: node
     plan: free
-    buildCommand: npm ci
+    buildCommand: npm install --no-audit --no-fund
     startCommand: npm start
     healthCheckPath: /health
     autoDeploy: true

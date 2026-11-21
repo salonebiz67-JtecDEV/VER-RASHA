@@ -47,7 +47,7 @@ Deploy the Render backend first so you have its live HTTPS URL before building t
 3. Connect your GitHub repository.
 4. Confirm these settings:
    - **Runtime:** `Node` (Node 22+ is requested via `package.json` `engines.node`)
-   - **Build Command:** `npm ci`
+   - **Build Command:** `npm install --no-audit --no-fund`
    - **Start Command:** `npm start`
    - **Health Check Path:** `/health`
 5. Add these **Environment Variables** in Render:
