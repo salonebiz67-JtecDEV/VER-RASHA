@@ -1,0 +1,8 @@
+{
+  "name": "VEY RASHA",
+  "description": "VEY RASHA luxury women's fashion boutique web and mobile shopping experience.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
