@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bell, Search, ShieldCheck, ShoppingBag } from 'lucide-react';
+import { Bell, Search, ShoppingBag } from 'lucide-react';
 import { useBoutique } from '../../context/BoutiqueContext';
 import type { AppRoute } from '../../types/boutique';
 
@@ -9,33 +9,38 @@ export const Header: React.FC = () => {
     navigate,
     cartCount,
     unreadNotificationCount,
-    isOwnerAuthorized,
-    openOwnerDashboard,
+    storeSettings,
   } = useBoutique();
 
   const navItems: { route: AppRoute; label: string }[] = [
     { route: 'home', label: 'Home' },
-    { route: 'explore', label: 'Explore' },
+    { route: 'explore', label: 'Shop' },
     { route: 'wishlist', label: 'Wishlist' },
     { route: 'account', label: 'Account' },
     { route: 'notifications', label: 'Updates' },
   ];
 
+  const isNavItemActive = (itemRoute: AppRoute) => {
+    if (route === itemRoute) return true;
+    if (itemRoute === 'explore' && route === 'product') return true;
+    return false;
+  };
+
   return (
-    <header className="relative z-40 shrink-0 border-b border-[#E4D8C5]/80 bg-[#F6F1E8]/92 backdrop-blur-md pt-safe">
+    <header className="relative z-40 shrink-0 border-b border-[#E4D8C5]/85 bg-[#F6F1E8]/94 backdrop-blur-md pt-safe">
       {/* Desktop 3-Zone Top Bar */}
       <div className="mx-auto hidden max-w-7xl items-center justify-between gap-8 px-6 py-4 md:flex">
         <button
           type="button"
           onClick={() => navigate('home')}
-          className="font-serif text-2xl font-medium tracking-[0.14em] text-[#302923] whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#302923]"
+          className="font-serif text-2xl font-medium tracking-[0.16em] text-[#302923] whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#302923]"
         >
-          VEY RASHA
+          {storeSettings.boutiqueName}
         </button>
 
         <nav className="flex items-center gap-7" aria-label="Primary Navigation">
           {navItems.map((item) => {
-            const active = route === item.route;
+            const active = isNavItemActive(item.route);
             return (
               <button
                 key={item.route}
@@ -62,57 +67,37 @@ export const Header: React.FC = () => {
           })}
         </nav>
 
-        <div className="flex items-center gap-2.5 shrink-0">
-          {isOwnerAuthorized && (
-            <button
-              type="button"
-              onClick={openOwnerDashboard}
-              className="inline-flex items-center gap-1.5 rounded-full border border-[#D8C3A5] bg-[#EFE7DA] px-4 py-2 text-xs font-medium text-[#302923] transition-colors hover:bg-[#E4D8C5] whitespace-nowrap shrink-0"
-            >
-              <ShieldCheck className="h-3.5 w-3.5 text-[#8C6D46]" strokeWidth={1.75} />
-              <span>Workspace</span>
-            </button>
-          )}
+        <div className="flex items-center shrink-0">
           <button
             type="button"
             onClick={() => navigate('cart')}
             className="inline-flex items-center gap-2 rounded-full bg-[#302923] px-5 py-2.5 text-xs font-medium tracking-wide text-[#F6F1E8] transition-colors duration-150 hover:bg-[#463D35] whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#302923]"
           >
-            <ShoppingBag className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <ShoppingBag className="h-3.5 w-3.5" strokeWidth={1.7} />
             <span>Bag</span>
             <span className="tabular-nums">({cartCount})</span>
           </button>
         </div>
       </div>
 
-      {/* Compact Mobile App Top Bar (52px) */}
-      <div className="flex h-[52px] items-center justify-between px-4 md:hidden">
+      {/* Compact Mobile App Top Bar */}
+      <div className="flex h-[54px] items-center justify-between px-4 md:hidden">
         <button
           type="button"
           onClick={() => navigate('home')}
-          className="font-serif text-xl font-medium tracking-[0.14em] text-[#302923] whitespace-nowrap shrink-0"
+          className="font-serif text-xl font-medium tracking-[0.15em] text-[#302923] whitespace-nowrap shrink-0"
         >
-          VEY RASHA
+          {storeSettings.boutiqueName}
         </button>
 
         <div className="flex items-center gap-1">
-          {isOwnerAuthorized && (
-            <button
-              type="button"
-              onClick={openOwnerDashboard}
-              aria-label="Open Atelier Workspace"
-              className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-[#8C6D46] transition-colors hover:bg-[#EFE7DA]"
-            >
-              <ShieldCheck className="h-5 w-5" strokeWidth={1.7} />
-            </button>
-          )}
           <button
             type="button"
             onClick={() => navigate('explore')}
-            aria-label="Search boutique"
+            aria-label="Search and shop boutique"
             className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-[#302923] transition-colors hover:bg-[#EFE7DA]"
           >
-            <Search className="h-5 w-5" strokeWidth={1.6} />
+            <Search className="h-[19px] w-[19px]" strokeWidth={1.6} />
           </button>
           <button
             type="button"
@@ -120,9 +105,9 @@ export const Header: React.FC = () => {
             aria-label="Notifications"
             className="relative flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-[#302923] transition-colors hover:bg-[#EFE7DA]"
           >
-            <Bell className="h-5 w-5" strokeWidth={1.6} />
+            <Bell className="h-[19px] w-[19px]" strokeWidth={1.6} />
             {unreadNotificationCount > 0 && (
-              <span className="absolute top-2.5 right-2.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#302923] px-1 text-[10px] font-medium text-[#F6F1E8] tabular-nums">
+              <span className="absolute top-2.5 right-2.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#302923] px-1 text-[9px] font-semibold text-[#F6F1E8] tabular-nums">
                 {unreadNotificationCount}
               </span>
             )}

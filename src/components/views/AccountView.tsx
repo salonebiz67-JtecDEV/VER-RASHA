@@ -89,6 +89,7 @@ export const AccountView: React.FC = () => {
     currency,
     setCurrency,
     navigate,
+    openWelcomeAuth,
     backendStatus,
     backendErrorMessage,
     checkBackendHealth,
@@ -303,6 +304,13 @@ export const AccountView: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-center">
+            <button
+              type="button"
+              onClick={() => openWelcomeAuth('signin')}
+              className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-[#302923] px-5 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35]"
+            >
+              <span>Sign In</span>
+            </button>
             <button
               type="button"
               onClick={() => setActiveTab('notifications')}
@@ -778,7 +786,7 @@ export const AccountView: React.FC = () => {
                       onClick={() => navigate('explore')}
                       className="min-h-[46px] rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.12em] text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35]"
                     >
-                      Explore Collection
+                      Shop Collection
                     </button>
                     {!showRetrieveForm && (
                       <button
@@ -1420,7 +1428,7 @@ export const AccountView: React.FC = () => {
                 onClick={() => navigate('explore')}
                 className="mt-6 min-h-[44px] rounded-full bg-[#302923] px-6 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35]"
               >
-                Explore Boutique
+                Shop Collection
               </button>
             </div>
           ) : (

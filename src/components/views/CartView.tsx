@@ -52,7 +52,7 @@ export const CartView: React.FC = () => {
             onClick={() => navigate('explore')}
             className="mt-6 min-h-[46px] rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.12em] text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35] active:scale-[0.98]"
           >
-            Explore Collection
+            Shop Collection
           </button>
         </div>
       ) : (

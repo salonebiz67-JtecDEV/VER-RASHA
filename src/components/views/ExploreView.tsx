@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { AlertCircle, RotateCcw, Search, SlidersHorizontal, X } from 'lucide-react';
 import { CATEGORIES } from '../../data/catalog';
 import { type PriceBand, type SortOption, useBoutique } from '../../context/BoutiqueContext';
+import { formatPrice } from '../../utils/formatCurrency';
 import { ProductCard } from '../ui/ProductCard';
 
 export const ExploreView: React.FC = () => {
@@ -16,10 +17,10 @@ export const ExploreView: React.FC = () => {
     sortBy,
     setSortBy,
     resetExploreFilters,
+    currency,
     isCatalogLoading,
     catalogError,
     retryCatalogLoad,
-    attemptSecretOwnerAccess,
   } = useBoutique();
 
   const filteredProducts = useMemo(() => {
@@ -56,25 +57,18 @@ export const ExploreView: React.FC = () => {
   const hasActiveFilters =
     searchQuery.trim() !== '' || activeCategory !== 'all' || priceBand !== 'all' || sortBy !== 'featured';
 
-  const handleExploreSearchSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const submitted = searchQuery.trim();
-    if (!submitted) return;
-    const granted = await attemptSecretOwnerAccess(submitted);
-    if (granted) {
-      setSearchQuery('');
-    }
-  };
+  const thresholdLow = formatPrice(450, currency);
+  const thresholdHigh = formatPrice(900, currency);
 
   return (
     <div className="mx-auto max-w-7xl px-4 pt-6 pb-12 sm:px-6 md:pt-10">
       <div className="border-b border-[#E4D8C5] pb-6">
-        <p className="text-xs font-medium tracking-[0.16em] text-[#8C6D46] uppercase">
-          The Boutique Archive
+        <p className="text-[11px] font-medium tracking-[0.18em] text-[#8C6D46] uppercase">
+          The Boutique Catalogue
         </p>
-        <div className="mt-1 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div className="mt-1 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
           <h1 className="font-serif text-3xl font-medium text-[#302923] sm:text-4xl">
-            Explore Collection
+            Shop Collection
           </h1>
           <p className="text-sm text-[#665B51] tabular-nums">
             {filteredProducts.length} {filteredProducts.length === 1 ? 'piece' : 'pieces'} available
@@ -85,11 +79,7 @@ export const ExploreView: React.FC = () => {
       {/* Search + Filters */}
       <div className="mt-6 space-y-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          {/* Search Input */}
-          <form
-            onSubmit={(e) => void handleExploreSearchSubmit(e)}
-            className="relative flex-1 lg:max-w-md"
-          >
+          <div className="relative flex-1 lg:max-w-md">
             <Search
               className="pointer-events-none absolute top-1/2 left-4 h-4 w-4 -translate-y-1/2 text-[#665B51]"
               strokeWidth={1.6}
@@ -98,7 +88,7 @@ export const ExploreView: React.FC = () => {
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by silhouette, silk, linen, or colour..."
+              placeholder="Search dresses, linen, silk, handbags..."
               aria-label="Search boutique products"
               className="h-11 w-full rounded-full border border-[#E4D8C5] bg-[#FCF9F4] pr-10 pl-10 text-sm text-[#302923] placeholder:text-[#665B51]/75 focus:border-[#B59972] focus:outline-none"
             />
@@ -112,9 +102,8 @@ export const ExploreView: React.FC = () => {
                 <X className="h-4 w-4" />
               </button>
             )}
-          </form>
+          </div>
 
-          {/* Price & Sort Controls */}
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <SlidersHorizontal className="h-4 w-4 text-[#665B51]" strokeWidth={1.6} />
@@ -128,9 +117,11 @@ export const ExploreView: React.FC = () => {
                 className="min-h-[44px] rounded-full border border-[#E4D8C5] bg-[#FCF9F4] px-4 text-xs font-medium text-[#302923] focus:border-[#B59972] focus:outline-none"
               >
                 <option value="all">All Prices</option>
-                <option value="under-450">Under $450</option>
-                <option value="450-900">$450 – $900</option>
-                <option value="over-900">Over $900</option>
+                <option value="under-450">Under {thresholdLow}</option>
+                <option value="450-900">
+                  {thresholdLow} – {thresholdHigh}
+                </option>
+                <option value="over-900">Over {thresholdHigh}</option>
               </select>
             </div>
 
@@ -165,7 +156,11 @@ export const ExploreView: React.FC = () => {
         </div>
 
         {/* Category Filter Tabs */}
-        <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar" role="tablist" aria-label="Filter by category">
+        <div
+          className="flex gap-2 overflow-x-auto pb-1 no-scrollbar"
+          role="tablist"
+          aria-label="Filter by category"
+        >
           {CATEGORIES.map((category) => {
             const active = activeCategory === category.slug;
             return (
@@ -211,26 +206,37 @@ export const ExploreView: React.FC = () => {
 
       {/* Loading Skeleton State */}
       {!catalogError && isCatalogLoading && (
-        <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true">
+        <div className="mt-8 grid grid-cols-2 gap-4 sm:gap-6 lg:grid-cols-3" aria-busy="true">
           {[1, 2, 3, 4, 5, 6].map((n) => (
             <div key={n} className="space-y-3">
-              <div className="aspect-[4/3] w-full animate-pulse rounded-xl bg-[#EFE7DA]" />
+              <div className="aspect-[4/5] w-full animate-pulse rounded-2xl bg-[#EFE7DA]" />
               <div className="h-3 w-24 animate-pulse rounded bg-[#EFE7DA]" />
-              <div className="h-5 w-48 animate-pulse rounded bg-[#EFE7DA]" />
+              <div className="h-5 w-40 animate-pulse rounded bg-[#EFE7DA]" />
               <div className="h-4 w-20 animate-pulse rounded bg-[#EFE7DA]" />
             </div>
           ))}
         </div>
       )}
 
-      {/* Empty State */}
-      {!catalogError && !isCatalogLoading && filteredProducts.length === 0 && (
+      {/* Empty Catalogue vs No Filter Matches */}
+      {!catalogError && !isCatalogLoading && products.length === 0 && (
+        <div className="mt-10 flex flex-col items-center rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] px-6 py-16 text-center">
+          <p className="font-serif text-2xl font-medium text-[#302923]">
+            New Collections Coming Soon
+          </p>
+          <p className="mt-2 max-w-md text-sm text-[#665B51]">
+            Our upcoming seasonal collection is being prepared. Please revisit shortly.
+          </p>
+        </div>
+      )}
+
+      {!catalogError && !isCatalogLoading && products.length > 0 && filteredProducts.length === 0 && (
         <div className="mt-10 flex flex-col items-center rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] px-6 py-16 text-center">
           <p className="font-serif text-2xl font-medium text-[#302923]">
             No matching pieces found
           </p>
           <p className="mt-2 max-w-md text-sm text-[#665B51]">
-            Adjust your category, price range, or search terms to explore our full seasonal archive.
+            Adjust your category, price range, or search terms to view the full boutique collection.
           </p>
           <button
             type="button"
@@ -244,7 +250,7 @@ export const ExploreView: React.FC = () => {
 
       {/* Product Grid */}
       {!catalogError && !isCatalogLoading && filteredProducts.length > 0 && (
-        <div className="mt-8 grid grid-cols-1 gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-8 grid grid-cols-2 gap-x-3.5 gap-y-8 sm:gap-x-6 sm:gap-y-10 lg:grid-cols-3">
           {filteredProducts.map((product) => (
             <ProductCard key={product.id} product={product} />
           ))}

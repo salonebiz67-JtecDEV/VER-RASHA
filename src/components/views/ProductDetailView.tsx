@@ -16,37 +16,55 @@ export const ProductDetailView: React.FC = () => {
     toggleWishlist,
   } = useBoutique();
 
-  const product = products.find((p) => p.id === selectedProductId) ?? products[0];
+  const product = products.find((p) => p.id === selectedProductId) ?? products[0] ?? null;
   const [activeImageIdx, setActiveImageIdx] = useState(0);
-  const [selectedSize, setSelectedSize] = useState(product.sizes[0]);
-  const [selectedColor, setSelectedColor] = useState(product.colors[0]);
+  const [selectedSize, setSelectedSize] = useState(product?.sizes[0] ?? '');
+  const [selectedColor, setSelectedColor] = useState(
+    product?.colors[0] ?? { name: 'Default', hex: '#D8C3A5' }
+  );
   const [quantity, setQuantity] = useState(1);
   const [addedFeedback, setAddedFeedback] = useState(false);
 
   useEffect(() => {
     if (!product) return;
     setActiveImageIdx(0);
-    setSelectedSize(product.sizes[0]);
-    setSelectedColor(product.colors[0]);
+    setSelectedSize(product.sizes[0] ?? '');
+    setSelectedColor(product.colors[0] ?? { name: 'Default', hex: '#D8C3A5' });
     setQuantity(1);
     setAddedFeedback(false);
   }, [product]);
 
-  if (!product) return null;
+  if (!product) {
+    return (
+      <div className="mx-auto max-w-xl px-4 pt-12 pb-20 text-center">
+        <h1 className="font-serif text-3xl font-medium text-[#302923]">
+          New Collections Coming Soon
+        </h1>
+        <p className="mt-2 text-sm text-[#665B51]">
+          This piece is currently unavailable. Explore our boutique collection for available silhouettes.
+        </p>
+        <button
+          type="button"
+          onClick={() => navigate('explore')}
+          className="mt-6 min-h-[46px] rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35]"
+        >
+          Return to Shop
+        </button>
+      </div>
+    );
+  }
 
   const saved = isWishlisted(product.id);
   const relatedProducts = products
     .filter(
-      (p) => p.id !== product.id && (p.category === product.category || p.collectionId === product.collectionId)
+      (p) =>
+        p.id !== product.id &&
+        (p.category === product.category || p.collectionId === product.collectionId)
     )
     .slice(0, 3);
 
-  const stockDisplay =
-    product.stockStatus === 'in_stock'
-      ? `In Stock · ${product.stockCount} available in atelier`
-      : product.stockStatus === 'low_stock'
-      ? `Limited Availability · Only ${product.stockCount} remaining`
-      : 'Currently Sold Out';
+  const availabilityLabel =
+    product.stockStatus === 'out_of_stock' ? 'Currently Unavailable' : 'Available';
 
   const handleAddToCart = () => {
     if (product.stockStatus === 'out_of_stock') return;
@@ -65,16 +83,16 @@ export const ProductDetailView: React.FC = () => {
           className="inline-flex min-h-[44px] items-center gap-2 text-xs font-medium tracking-wider text-[#665B51] uppercase hover:text-[#302923]"
         >
           <ArrowLeft className="h-4 w-4" strokeWidth={1.6} />
-          <span>Back to Collection</span>
+          <span>Back to Shop</span>
         </button>
         <span className="text-xs text-[#665B51]">{product.categoryLabel}</span>
       </div>
 
-      {/* Main PDP Split */}
+      {/* Main Product Details Split */}
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-12 lg:items-start lg:gap-12">
         {/* Left: Multi-Photo Gallery */}
-        <div className="space-y-4 lg:col-span-7">
-          <div className="aspect-[4/3] w-full overflow-hidden rounded-2xl border border-[#E4D8C5] bg-[#EFE7DA]">
+        <div className="space-y-3.5 lg:col-span-7">
+          <div className="aspect-[4/5] w-full overflow-hidden rounded-2xl border border-[#E4D8C5] bg-[#EFE7DA] sm:aspect-[4/3]">
             <LuxuryImage
               src={product.images[activeImageIdx] ?? product.images[0]}
               alt={`${product.name} — view ${activeImageIdx + 1}`}
@@ -83,31 +101,33 @@ export const ProductDetailView: React.FC = () => {
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
-            {product.images.map((img, idx) => {
-              const isCurrent = idx === activeImageIdx;
-              return (
-                <button
-                  key={`${product.id}-thumb-${idx}`}
-                  type="button"
-                  onClick={() => setActiveImageIdx(idx)}
-                  aria-label={`View photo ${idx + 1} of ${product.name}`}
-                  aria-pressed={isCurrent}
-                  className={`aspect-[4/3] overflow-hidden rounded-xl border transition-all ${
-                    isCurrent
-                      ? 'border-[#302923] ring-1 ring-[#302923]'
-                      : 'border-[#E4D8C5] opacity-75 hover:opacity-100'
-                  }`}
-                >
-                  <LuxuryImage
-                    src={img}
-                    alt={`${product.name} alternate view ${idx + 1}`}
-                    className="h-full w-full"
-                  />
-                </button>
-              );
-            })}
-          </div>
+          {product.images.length > 1 && (
+            <div className="grid grid-cols-3 gap-3">
+              {product.images.map((img, idx) => {
+                const isCurrent = idx === activeImageIdx;
+                return (
+                  <button
+                    key={`${product.id}-thumb-${idx}`}
+                    type="button"
+                    onClick={() => setActiveImageIdx(idx)}
+                    aria-label={`View photo ${idx + 1} of ${product.name}`}
+                    aria-pressed={isCurrent}
+                    className={`aspect-[4/3] overflow-hidden rounded-xl border transition-all ${
+                      isCurrent
+                        ? 'border-[#302923] ring-1 ring-[#302923]'
+                        : 'border-[#E4D8C5] opacity-75 hover:opacity-100'
+                    }`}
+                  >
+                    <LuxuryImage
+                      src={img}
+                      alt={`${product.name} alternate view ${idx + 1}`}
+                      className="h-full w-full"
+                    />
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Right: Contiguous Purchase Module */}
@@ -123,12 +143,12 @@ export const ProductDetailView: React.FC = () => {
             <p className="text-2xl font-medium text-[#302923] tabular-nums">
               {formatPrice(product.priceUsd, currency)}
             </p>
-            <p className="text-xs font-medium text-[#665B51]">{stockDisplay}</p>
+            <p className="text-xs font-medium text-[#665B51]">{availabilityLabel}</p>
           </div>
 
           <p className="mt-5 text-sm leading-relaxed text-[#665B51]">{product.description}</p>
 
-          {/* Color Selector */}
+          {/* Colour Selector */}
           <div className="mt-6">
             <div className="flex items-center justify-between text-xs">
               <span className="font-semibold tracking-wider text-[#302923] uppercase">Colour</span>
@@ -207,7 +227,7 @@ export const ProductDetailView: React.FC = () => {
                 </span>
                 <button
                   type="button"
-                  onClick={() => setQuantity((q) => Math.min(product.stockCount, q + 1))}
+                  onClick={() => setQuantity((q) => Math.min(10, q + 1))}
                   aria-label="Increase quantity"
                   className="flex h-9 w-9 items-center justify-center rounded-full text-[#302923] hover:bg-[#EFE7DA]"
                 >
@@ -260,7 +280,7 @@ export const ProductDetailView: React.FC = () => {
             </div>
             <div className="flex items-center gap-2 pt-1 text-[#302923]">
               <ShieldCheck className="h-4 w-4 shrink-0 text-[#8C6D46]" strokeWidth={1.6} />
-              <span>Delivery fees calculated by destination region at checkout</span>
+              <span>Delivery fee and final total are confirmed by VEY RASHA after checkout review</span>
             </div>
           </div>
         </div>
@@ -272,7 +292,7 @@ export const ProductDetailView: React.FC = () => {
           <h2 className="font-serif text-2xl font-medium text-[#302923]">
             Complementary Pieces
           </h2>
-          <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-6 grid grid-cols-2 gap-x-3.5 gap-y-8 sm:gap-x-6 lg:grid-cols-3">
             {relatedProducts.map((item) => (
               <ProductCard key={item.id} product={item} />
             ))}

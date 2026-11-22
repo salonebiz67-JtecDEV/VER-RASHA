@@ -13,8 +13,8 @@ import { CheckoutView } from './components/views/CheckoutView';
 import { ExploreView } from './components/views/ExploreView';
 import { HomeView } from './components/views/HomeView';
 import { NotificationsView } from './components/views/NotificationsView';
-import { OwnerPortalView } from './components/views/OwnerPortalView';
 import { ProductDetailView } from './components/views/ProductDetailView';
+import { WelcomeAuthView } from './components/views/WelcomeAuthView';
 import { WishlistView } from './components/views/WishlistView';
 import { BoutiqueProvider, useBoutique } from './context/BoutiqueContext';
 import type { AppRoute } from './types/boutique';
@@ -99,15 +99,14 @@ const BoutiqueShell: React.FC = () => {
     route,
     selectedProductId,
     toastMessage,
-    isOwnerAuthorized,
-    isOwnerDashboardOpen,
+    showWelcomeAuth,
   } = useBoutique();
   const scrollPositionsRef = useRef<Partial<Record<AppRoute, number>>>({});
 
-  if (isOwnerAuthorized && isOwnerDashboardOpen) {
+  if (showWelcomeAuth) {
     return (
       <>
-        <OwnerPortalView />
+        <WelcomeAuthView />
         {toastMessage && (
           <div
             role="status"
@@ -126,7 +125,7 @@ const BoutiqueShell: React.FC = () => {
       <Header />
 
       <main className="relative min-h-0 flex-1 overflow-hidden">
-        {/* Stable mounted primary navigation pages with independent scroll state */}
+        {/* Independent scroll containers preserving scroll state across tabs */}
         <PageScrollContainer
           pageKey="home"
           isActive={route === 'home'}

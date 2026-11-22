@@ -1,5 +1,5 @@
 import React from 'react';
-import { Compass, Heart, Home, ShoppingBag, User } from 'lucide-react';
+import { Heart, Home, LayoutGrid, ShoppingBag, User } from 'lucide-react';
 import { useBoutique } from '../../context/BoutiqueContext';
 import type { AppRoute } from '../../types/boutique';
 
@@ -13,9 +13,9 @@ export const BottomNav: React.FC = () => {
     badgeCount?: number;
   }[] = [
     { route: 'home', label: 'Home', icon: Home },
-    { route: 'explore', label: 'Explore', icon: Compass },
+    { route: 'explore', label: 'Shop', icon: LayoutGrid },
     { route: 'wishlist', label: 'Wishlist', icon: Heart, badgeCount: wishlistIds.length },
-    { route: 'cart', label: 'Cart', icon: ShoppingBag, badgeCount: cartCount },
+    { route: 'cart', label: 'Bag', icon: ShoppingBag, badgeCount: cartCount },
     { route: 'account', label: 'Account', icon: User },
   ];
 
@@ -30,7 +30,7 @@ export const BottomNav: React.FC = () => {
   return (
     <nav
       aria-label="Mobile Bottom Navigation"
-      className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#E4D8C5] bg-[#FCF9F4]/95 backdrop-blur-md pb-safe md:hidden"
+      className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#E4D8C5] bg-[#FCF9F4]/96 backdrop-blur-md pb-safe md:hidden"
     >
       <div className="grid h-16 grid-cols-5 items-center px-1">
         {tabs.map((tab) => {
@@ -42,36 +42,25 @@ export const BottomNav: React.FC = () => {
               type="button"
               onClick={() => navigate(tab.route)}
               aria-current={active ? 'page' : undefined}
-              className={`relative flex min-h-[48px] flex-col items-center justify-center rounded-xl transition-colors duration-150 ${
-                active ? 'text-[#302923]' : 'text-[#665B51] hover:text-[#302923]'
+              className={`flex min-h-[48px] flex-col items-center justify-center transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#302923] ${
+                active ? 'text-[#302923]' : 'text-[#8B7F73] hover:text-[#302923]'
               }`}
             >
               <div className="relative flex items-center justify-center">
-                <Icon
-                  className={`h-5 w-5 transition-transform duration-150 ${
-                    active ? 'scale-105' : ''
-                  }`}
-                  strokeWidth={active ? 2.1 : 1.6}
-                />
+                <Icon className="h-[19px] w-[19px]" strokeWidth={1.55} />
                 {typeof tab.badgeCount === 'number' && tab.badgeCount > 0 && (
-                  <span className="absolute -top-1.5 -right-2.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#302923] px-1 text-[10px] font-medium text-[#F6F1E8] tabular-nums">
+                  <span className="absolute -top-1.5 -right-2.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#302923] px-1 text-[9px] font-semibold text-[#F6F1E8] tabular-nums">
                     {tab.badgeCount}
                   </span>
                 )}
               </div>
               <span
-                className={`mt-1 text-[10px] tracking-tight whitespace-nowrap ${
-                  active ? 'font-semibold text-[#302923]' : 'font-medium text-[#665B51]'
+                className={`mt-1 text-[10px] tracking-[0.02em] whitespace-nowrap ${
+                  active ? 'font-semibold text-[#302923]' : 'font-normal text-[#8B7F73]'
                 }`}
               >
                 {tab.label}
               </span>
-              {active && (
-                <span
-                  className="absolute top-1 h-[2px] w-5 rounded-full bg-[#B59972]"
-                  aria-hidden="true"
-                />
-              )}
             </button>
           );
         })}

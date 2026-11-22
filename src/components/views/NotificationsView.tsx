@@ -253,7 +253,7 @@ export const NotificationsView: React.FC = () => {
               onClick={() => navigate('explore')}
               className="min-h-[44px] rounded-full bg-[#302923] px-6 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35]"
             >
-              Explore Boutique
+              Shop Collection
             </button>
             <button
               type="button"

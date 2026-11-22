@@ -12,14 +12,16 @@ import type {
   EditorialCampaign,
   NotificationItem,
   OrderRecord,
+  Product,
+  StoreSettings,
+} from '../src/types/boutique.ts';
+import type {
   OwnerAuditEventType,
   OwnerDeviceSlot,
   OwnerDeviceSummary,
   OwnerSecurityAuditEntry,
   OwnerSecuritySummary,
-  Product,
-  StoreSettings,
-} from '../src/types/boutique.ts';
+} from './types.ts';
 
 export interface StoredOrderRecord extends OrderRecord {
   customerSessionId: string;

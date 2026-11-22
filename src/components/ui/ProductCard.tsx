@@ -14,15 +14,15 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const saved = isWishlisted(product.id);
 
   const subtleTag =
-    product.stockStatus === 'low_stock'
-      ? `Only ${product.stockCount} left`
+    product.stockStatus === 'out_of_stock'
+      ? 'Unavailable'
       : product.isNewArrival
       ? 'New'
       : null;
 
   return (
     <article className="group flex flex-col">
-      <div className="relative aspect-[4/5] w-full overflow-hidden rounded-2xl border border-[#E4D8C5]/80 bg-[#EFE7DA] transition-[transform,box-shadow] duration-200 ease-out group-hover:-translate-y-0.5 group-hover:shadow-[0_12px_28px_-14px_rgba(48,41,35,0.22)] active:scale-[0.99]">
+      <div className="relative aspect-[4/5] w-full overflow-hidden rounded-2xl border border-[#E4D8C5]/80 bg-[#EFE7DA] transition-[transform,box-shadow] duration-200 ease-out group-hover:-translate-y-0.5 group-hover:shadow-[0_12px_28px_-14px_rgba(48,41,35,0.2)] active:scale-[0.99]">
         <button
           type="button"
           onClick={() => navigate('product', { productId: product.id })}
@@ -47,7 +47,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             saved ? `Remove ${product.name} from wishlist` : `Save ${product.name} to wishlist`
           }
           aria-pressed={saved}
-          className="absolute top-2.5 right-2.5 flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full border border-[#E4D8C5]/70 bg-[#FCF9F4]/90 text-[#302923] backdrop-blur-sm transition-transform duration-150 hover:bg-[#FCF9F4] active:scale-95 focus-visible:outline-2 focus-visible:outline-[#302923]"
+          className="absolute top-2.5 right-2.5 flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full border border-[#E4D8C5]/75 bg-[#FCF9F4]/90 text-[#302923] backdrop-blur-sm transition-transform duration-150 hover:bg-[#FCF9F4] active:scale-95 focus-visible:outline-2 focus-visible:outline-[#302923]"
         >
           <Heart
             className={`h-4 w-4 transition-colors duration-150 ${
