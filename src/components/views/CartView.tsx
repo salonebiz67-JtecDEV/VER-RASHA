@@ -79,7 +79,7 @@ export const CartView: React.FC = () => {
                       className="aspect-[4/5] w-24 shrink-0 overflow-hidden rounded-xl border border-[#E4D8C5]/80 bg-[#EFE7DA] sm:w-28 focus-visible:outline-2 focus-visible:outline-[#302923]"
                     >
                       <LuxuryImage
-                        src={product.images[0]}
+                        src={product.images[0] ?? ''}
                         alt={product.name}
                         className="h-full w-full"
                         imgClassName="transition-transform duration-300 hover:scale-[1.03]"

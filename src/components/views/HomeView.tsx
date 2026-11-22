@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowRight, Search, X } from 'lucide-react';
+import { AlertCircle, ArrowRight, Search, X } from 'lucide-react';
 import { useBoutique } from '../../context/BoutiqueContext';
 import { formatPrice } from '../../utils/formatCurrency';
 import { LuxuryImage } from '../ui/LuxuryImage';
@@ -15,12 +15,15 @@ export const HomeView: React.FC = () => {
     collections,
     campaigns,
     currency,
+    isCatalogLoading,
+    catalogError,
+    retryCatalogLoad,
   } = useBoutique();
   const [localSearch, setLocalSearch] = useState('');
 
   const newArrivals = products.filter((p) => p.isNewArrival).slice(0, 4);
   const bestSellers = products.filter((p) => p.isBestSeller).slice(0, 4);
-  const visualCategories = categories.filter((cat) => cat.slug !== 'all' && cat.image);
+  const visualCategories = categories.filter((cat) => cat.slug !== 'all' && Boolean(cat.image));
   const campaign = campaigns[0];
   const featuredProduct = products[0];
 
@@ -86,7 +89,7 @@ export const HomeView: React.FC = () => {
                   onClick={() => navigate('product', { productId: featuredProduct.id })}
                   className="inline-flex min-h-[46px] items-center rounded-full border border-[#F6F1E8]/45 bg-[#302923]/45 px-6 py-3 text-xs font-medium tracking-[0.12em] text-[#F6F1E8] uppercase backdrop-blur-sm transition-colors duration-150 hover:bg-[#302923]/75 active:scale-[0.98] whitespace-nowrap"
                 >
-                  Featured Gown
+                  Featured Piece
                 </button>
               )}
             </div>
@@ -156,7 +159,7 @@ export const HomeView: React.FC = () => {
                       >
                         <div className="aspect-[4/5] w-10 shrink-0 overflow-hidden rounded-lg bg-[#EFE7DA]">
                           <LuxuryImage
-                            src={item.images[0]}
+                            src={item.images[0] ?? ''}
                             alt={item.name}
                             className="h-full w-full"
                           />
@@ -195,7 +198,39 @@ export const HomeView: React.FC = () => {
         </div>
       </section>
 
-      {products.length === 0 ? (
+      {catalogError && (
+        <section
+          role="alert"
+          className="rounded-2xl border border-[#D8C3A5] bg-[#FCF9F4] px-6 py-12 text-center"
+        >
+          <AlertCircle className="mx-auto h-7 w-7 text-[#8C6D46]" strokeWidth={1.5} />
+          <h2 className="mt-3 font-serif text-2xl font-medium text-[#302923]">
+            Collection Temporarily Unavailable
+          </h2>
+          <p className="mx-auto mt-1 max-w-md text-sm text-[#665B51]">{catalogError}</p>
+          <button
+            type="button"
+            onClick={retryCatalogLoad}
+            className="mt-5 min-h-[44px] rounded-full bg-[#302923] px-6 py-2.5 text-xs font-medium text-[#F6F1E8] hover:bg-[#463D35]"
+          >
+            Retry Loading
+          </button>
+        </section>
+      )}
+
+      {!catalogError && isCatalogLoading && products.length === 0 && (
+        <section aria-busy="true" className="grid grid-cols-2 gap-4 sm:gap-6 lg:grid-cols-4">
+          {[1, 2, 3, 4].map((n) => (
+            <div key={n} className="space-y-3">
+              <div className="aspect-[4/5] w-full animate-pulse rounded-2xl bg-[#EFE7DA]" />
+              <div className="h-3 w-24 animate-pulse rounded bg-[#EFE7DA]" />
+              <div className="h-5 w-40 animate-pulse rounded bg-[#EFE7DA]" />
+            </div>
+          ))}
+        </section>
+      )}
+
+      {!catalogError && !isCatalogLoading && products.length === 0 && (
         <section className="rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] px-6 py-16 text-center">
           <p className="text-[11px] font-medium tracking-[0.18em] text-[#8C6D46] uppercase">
             Seasonal Atelier
@@ -208,57 +243,61 @@ export const HomeView: React.FC = () => {
             Updates for launch announcements.
           </p>
         </section>
-      ) : (
+      )}
+
+      {!catalogError && !isCatalogLoading && (
         <>
           {/* Visual Category Collections */}
-          <section aria-label="Shop by Category">
-            <div className="flex items-end justify-between gap-4 border-b border-[#E4D8C5] pb-4">
-              <div>
-                <p className="text-[11px] font-medium tracking-[0.18em] text-[#8C6D46] uppercase">
-                  Curated Wardrobe
-                </p>
-                <h2 className="mt-1 font-serif text-2xl font-medium text-[#302923] sm:text-3xl">
-                  Shop by Category
-                </h2>
+          {visualCategories.length > 0 && (
+            <section aria-label="Shop by Category">
+              <div className="flex items-end justify-between gap-4 border-b border-[#E4D8C5] pb-4">
+                <div>
+                  <p className="text-[11px] font-medium tracking-[0.18em] text-[#8C6D46] uppercase">
+                    Curated Wardrobe
+                  </p>
+                  <h2 className="mt-1 font-serif text-2xl font-medium text-[#302923] sm:text-3xl">
+                    Shop by Category
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navigate('explore', { category: 'all' })}
+                  className="min-h-[44px] inline-flex items-center text-xs font-semibold tracking-[0.12em] text-[#302923] uppercase underline decoration-[#B59972] underline-offset-4 transition-colors hover:text-[#8C6D46] whitespace-nowrap shrink-0"
+                >
+                  View All
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => navigate('explore', { category: 'all' })}
-                className="min-h-[44px] inline-flex items-center text-xs font-semibold tracking-[0.12em] text-[#302923] uppercase underline decoration-[#B59972] underline-offset-4 transition-colors hover:text-[#8C6D46] whitespace-nowrap shrink-0"
-              >
-                View All
-              </button>
-            </div>
 
-            <div className="mt-6 flex gap-3.5 overflow-x-auto pb-2 no-scrollbar lg:grid lg:grid-cols-6 lg:gap-4 lg:overflow-visible lg:pb-0">
-              {visualCategories.map((cat) => {
-                const itemCount = products.filter((p) => p.category === cat.slug).length;
-                return (
-                  <button
-                    key={cat.slug}
-                    type="button"
-                    onClick={() => navigate('explore', { category: cat.slug })}
-                    className="group flex w-[142px] shrink-0 flex-col text-left transition-transform duration-150 active:scale-[0.98] lg:w-auto focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#302923]"
-                  >
-                    <div className="aspect-[4/5] w-full overflow-hidden rounded-xl border border-[#E4D8C5] bg-[#EFE7DA]">
-                      <LuxuryImage
-                        src={cat.image!}
-                        alt={cat.label}
-                        className="h-full w-full"
-                        imgClassName="transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-[1.04]"
-                      />
-                    </div>
-                    <span className="mt-2.5 font-serif text-base font-medium text-[#302923] transition-colors group-hover:text-[#8C6D46]">
-                      {cat.label}
-                    </span>
-                    <span className="text-[11px] text-[#665B51] tabular-nums">
-                      {itemCount} {itemCount === 1 ? 'piece' : 'pieces'}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
+              <div className="mt-6 flex gap-3.5 overflow-x-auto pb-2 no-scrollbar lg:grid lg:grid-cols-6 lg:gap-4 lg:overflow-visible lg:pb-0">
+                {visualCategories.map((cat) => {
+                  const itemCount = products.filter((p) => p.category === cat.slug).length;
+                  return (
+                    <button
+                      key={cat.slug}
+                      type="button"
+                      onClick={() => navigate('explore', { category: cat.slug })}
+                      className="group flex w-[142px] shrink-0 flex-col text-left transition-transform duration-150 active:scale-[0.98] lg:w-auto focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#302923]"
+                    >
+                      <div className="aspect-[4/5] w-full overflow-hidden rounded-xl border border-[#E4D8C5] bg-[#EFE7DA]">
+                        <LuxuryImage
+                          src={cat.image ?? ''}
+                          alt={cat.label}
+                          className="h-full w-full"
+                          imgClassName="transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-[1.04]"
+                        />
+                      </div>
+                      <span className="mt-2.5 font-serif text-base font-medium text-[#302923] transition-colors group-hover:text-[#8C6D46]">
+                        {cat.label}
+                      </span>
+                      <span className="text-[11px] text-[#665B51] tabular-nums">
+                        {itemCount} {itemCount === 1 ? 'piece' : 'pieces'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
 
           {/* New Arrivals */}
           {newArrivals.length > 0 && (

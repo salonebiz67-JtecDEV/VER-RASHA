@@ -658,6 +658,16 @@ export function deleteProductRecord(productId: string): boolean {
   return true;
 }
 
+export function getCampaignById(campaignId: string): EditorialCampaign | undefined {
+  return state.campaigns.find((c) => c.id === campaignId);
+}
+
+export function addCampaignRecord(campaign: EditorialCampaign): EditorialCampaign {
+  state.campaigns.unshift(campaign);
+  persistStore();
+  return campaign;
+}
+
 export function updateCampaignRecord(
   campaignId: string,
   updater: (current: EditorialCampaign) => EditorialCampaign
@@ -670,16 +680,44 @@ export function updateCampaignRecord(
   return updated;
 }
 
+export function deleteCampaignRecord(campaignId: string): boolean {
+  const before = state.campaigns.length;
+  state.campaigns = state.campaigns.filter((c) => c.id !== campaignId);
+  if (state.campaigns.length === before) return false;
+  persistStore();
+  return true;
+}
+
+export function getCollectionById(collectionId: string): Collection | undefined {
+  return state.collections.find((c) => c.id === collectionId || c.slug === collectionId);
+}
+
+export function addCollectionRecord(collection: Collection): Collection {
+  state.collections.unshift(collection);
+  persistStore();
+  return collection;
+}
+
 export function updateCollectionRecord(
   collectionId: string,
   updater: (current: Collection) => Collection
 ): Collection | null {
-  const idx = state.collections.findIndex((c) => c.id === collectionId);
+  const idx = state.collections.findIndex((c) => c.id === collectionId || c.slug === collectionId);
   if (idx === -1) return null;
   const updated = updater(state.collections[idx]);
   state.collections[idx] = updated;
   persistStore();
   return updated;
+}
+
+export function deleteCollectionRecord(collectionId: string): boolean {
+  const before = state.collections.length;
+  state.collections = state.collections.filter(
+    (c) => c.id !== collectionId && c.slug !== collectionId
+  );
+  if (state.collections.length === before) return false;
+  persistStore();
+  return true;
 }
 
 export function updateStoreSettingsRecord(patch: Partial<StoreSettings>): StoreSettings {

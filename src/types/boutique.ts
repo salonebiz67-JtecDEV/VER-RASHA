@@ -48,13 +48,20 @@ export interface Product {
   isBestSeller: boolean;
 }
 
+export type CampaignStatus = 'draft' | 'active' | 'scheduled' | 'archived';
+
 export interface Collection {
   id: string;
+  slug?: string;
   title: string;
   season: string;
   summary: string;
   image: string;
   filterCategory: CategorySlug;
+  isActive?: boolean;
+  sortOrder?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface EditorialCampaign {
@@ -65,6 +72,12 @@ export interface EditorialCampaign {
   ctaLabel: string;
   image: string;
   targetCategory: CategorySlug;
+  status?: CampaignStatus;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  sortOrder?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CartItem {

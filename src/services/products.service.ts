@@ -1,6 +1,7 @@
 import { DEFAULT_STORE_SETTINGS } from '../data/storeConfig';
 import { isSupabaseConfigured, supabase, SUPABASE_CONFIG_WARNING } from '../lib/supabase';
 import type {
+  CampaignStatus,
   CategorySlug,
   Collection,
   ColorOption,
@@ -31,22 +32,28 @@ export interface CatalogSnapshot {
 export function getBoutiqueMediaUrl(storagePath: string | null | undefined): string {
   const trimmed = (storagePath ?? '').trim();
   if (!trimmed) return '';
+
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('javascript:') || lower.startsWith('vbscript:')) {
+    return '';
+  }
+
+  // Ignore legacy bundled demo photo paths if any stale database record still points to them
+  if (lower.includes('/src/assets/images/') || lower.startsWith('src/assets/images/')) {
+    return '';
+  }
+
   if (
-    trimmed.startsWith('http://') ||
-    trimmed.startsWith('https://') ||
-    trimmed.startsWith('data:') ||
-    trimmed.startsWith('blob:')
+    lower.startsWith('https://') ||
+    lower.startsWith('http://') ||
+    lower.startsWith('blob:')
   ) {
     return trimmed;
   }
 
-  // Allow repo static asset paths if explicitly referenced
-  if (trimmed.startsWith('/src/assets/') || trimmed.startsWith('src/assets/')) {
-    return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
-  }
-
-  if (!supabase) return trimmed;
+  if (!supabase) return '';
   const cleanPath = trimmed.replace(/^\/+/, '');
+  if (!cleanPath || cleanPath.includes('..')) return '';
   const { data } = supabase.storage.from(BOUTIQUE_MEDIA_BUCKET).getPublicUrl(cleanPath);
   return data.publicUrl;
 }
@@ -90,6 +97,36 @@ interface DbCategoryRow {
   sort_order: number | null;
 }
 
+interface DbCollectionRow {
+  id: string;
+  slug: string;
+  title: string;
+  season: string | null;
+  summary: string | null;
+  image_path: string | null;
+  filter_category: string | null;
+  is_active: boolean | null;
+  sort_order: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbCampaignRow {
+  id: string;
+  kicker: string | null;
+  title: string;
+  description: string | null;
+  cta_label: string | null;
+  image_path: string | null;
+  target_category: string | null;
+  status: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  sort_order: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface DbStoreSettingsRow {
   boutique_name: string | null;
   default_currency: string | null;
@@ -111,9 +148,24 @@ const KNOWN_CATEGORIES = new Set<Exclude<CategorySlug, 'all'>>([
   'jewellery',
 ]);
 
-function normalizeCategorySlug(raw: string): Exclude<CategorySlug, 'all'> {
-  const lower = raw.trim().toLowerCase() as Exclude<CategorySlug, 'all'>;
+const KNOWN_CAMPAIGN_STATUSES = new Set<CampaignStatus>([
+  'draft',
+  'active',
+  'scheduled',
+  'archived',
+]);
+
+function normalizeCategorySlug(raw: string | null | undefined): Exclude<CategorySlug, 'all'> {
+  const lower = (raw ?? '').trim().toLowerCase() as Exclude<CategorySlug, 'all'>;
   return KNOWN_CATEGORIES.has(lower) ? lower : 'dresses';
+}
+
+function normalizeFilterCategory(raw: string | null | undefined): CategorySlug {
+  const lower = (raw ?? '').trim().toLowerCase();
+  if (lower === 'all') return 'all';
+  return KNOWN_CATEGORIES.has(lower as Exclude<CategorySlug, 'all'>)
+    ? (lower as CategorySlug)
+    : 'all';
 }
 
 function mapProductRow(row: DbProductRow): Product {
@@ -169,15 +221,50 @@ function mapProductRow(row: DbProductRow): Product {
     description: row.description ?? '',
     material: row.material ?? '',
     care: row.care ?? '',
-    sizes: sizeSet.size > 0 ? Array.from(sizeSet) : ['One Size'],
-    colors:
-      colorMap.size > 0
-        ? Array.from(colorMap.values())
-        : [{ name: 'Signature', hex: '#D8C3A5' }],
+    sizes: Array.from(sizeSet),
+    colors: Array.from(colorMap.values()),
     stockStatus,
     stockCount: totalStock,
     isNewArrival: Boolean(row.is_new_arrival),
     isBestSeller: Boolean(row.is_best_seller),
+  };
+}
+
+function mapCollectionRow(row: DbCollectionRow): Collection {
+  return {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    season: row.season ?? '',
+    summary: row.summary ?? '',
+    image: getBoutiqueMediaUrl(row.image_path),
+    filterCategory: normalizeFilterCategory(row.filter_category),
+    isActive: row.is_active ?? true,
+    sortOrder: row.sort_order ?? 0,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapCampaignRow(row: DbCampaignRow): EditorialCampaign {
+  const status: CampaignStatus =
+    row.status && KNOWN_CAMPAIGN_STATUSES.has(row.status as CampaignStatus)
+      ? (row.status as CampaignStatus)
+      : 'active';
+  return {
+    id: row.id,
+    kicker: row.kicker ?? '',
+    title: row.title,
+    description: row.description ?? '',
+    ctaLabel: row.cta_label || 'Shop Collection',
+    image: getBoutiqueMediaUrl(row.image_path),
+    targetCategory: normalizeFilterCategory(row.target_category),
+    status,
+    startsAt: row.starts_at,
+    endsAt: row.ends_at,
+    sortOrder: row.sort_order ?? 0,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -186,7 +273,9 @@ export async function fetchBoutiqueCatalog(): Promise<CatalogSnapshot> {
     throw new Error(SUPABASE_CONFIG_WARNING);
   }
 
-  const [productsRes, categoriesRes, settingsRes] = await Promise.all([
+  const nowIso = new Date().toISOString();
+
+  const [productsRes, categoriesRes, collectionsRes, campaignsRes, settingsRes] = await Promise.all([
     supabase
       .from('products')
       .select(
@@ -227,20 +316,35 @@ export async function fetchBoutiqueCatalog(): Promise<CatalogSnapshot> {
       .select('slug, label, image_path, sort_order')
       .eq('is_active', true)
       .order('sort_order', { ascending: true }),
+    supabase
+      .from('collections')
+      .select('*')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('campaigns')
+      .select('*')
+      .eq('status', 'active')
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: false }),
     supabase.from('store_settings').select('*').eq('id', 1).maybeSingle(),
   ]);
 
   if (productsRes.error) {
-    throw new Error(productsRes.error.message || 'Unable to load boutique catalogue.');
+    throw new Error('Unable to load the boutique catalogue right now.');
   }
 
   const products = ((productsRes.data ?? []) as DbProductRow[]).map(mapProductRow);
 
-  const dbCategories = ((categoriesRes.data ?? []) as DbCategoryRow[]).map((cat) => ({
-    slug: cat.slug as CategorySlug,
-    label: cat.label,
-    image: cat.image_path ? getBoutiqueMediaUrl(cat.image_path) : undefined,
-  }));
+  const dbCategories = ((categoriesRes.data ?? []) as DbCategoryRow[]).map((cat) => {
+    const resolvedImage = getBoutiqueMediaUrl(cat.image_path);
+    return {
+      slug: cat.slug as CategorySlug,
+      label: cat.label,
+      image: resolvedImage || undefined,
+    };
+  });
 
   const categories: BoutiqueCategoryItem[] = [
     { slug: 'all', label: 'All' },
@@ -270,21 +374,35 @@ export async function fetchBoutiqueCatalog(): Promise<CatalogSnapshot> {
     backendCheckoutEnabled: true,
   };
 
-  const rawCollections = Array.isArray(settingsRow?.collections)
-    ? (settingsRow.collections as Collection[])
-    : [];
-  const collections = rawCollections.map((col) => ({
-    ...col,
-    image: getBoutiqueMediaUrl(col.image),
-  }));
+  // Prefer normalized public.collections & public.campaigns tables; fall back to
+  // legacy store_settings jsonb only if the normalized tables have not been migrated yet.
+  let collections: Collection[] = [];
+  if (!collectionsRes.error) {
+    collections = ((collectionsRes.data ?? []) as DbCollectionRow[]).map(mapCollectionRow);
+  } else if (Array.isArray(settingsRow?.collections)) {
+    collections = (settingsRow.collections as Collection[])
+      .filter((col) => col && typeof col.title === 'string' && col.id !== 'lumiere-soir')
+      .map((col) => ({
+        ...col,
+        image: getBoutiqueMediaUrl(col.image),
+      }));
+  }
 
-  const rawCampaigns = Array.isArray(settingsRow?.campaigns)
-    ? (settingsRow.campaigns as EditorialCampaign[])
-    : [];
-  const campaigns = rawCampaigns.map((camp) => ({
-    ...camp,
-    image: getBoutiqueMediaUrl(camp.image),
-  }));
+  let campaigns: EditorialCampaign[] = [];
+  if (!campaignsRes.error) {
+    campaigns = ((campaignsRes.data ?? []) as DbCampaignRow[])
+      .filter(
+        (c) => (!c.starts_at || c.starts_at <= nowIso) && (!c.ends_at || c.ends_at >= nowIso)
+      )
+      .map(mapCampaignRow);
+  } else if (Array.isArray(settingsRow?.campaigns)) {
+    campaigns = (settingsRow.campaigns as EditorialCampaign[])
+      .filter((camp) => camp && typeof camp.title === 'string' && camp.id !== 'campaign-main')
+      .map((camp) => ({
+        ...camp,
+        image: getBoutiqueMediaUrl(camp.image),
+      }));
+  }
 
   const heroImageUrl = settingsRow?.hero_image_path
     ? getBoutiqueMediaUrl(settingsRow.hero_image_path)

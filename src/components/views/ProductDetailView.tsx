@@ -14,13 +14,16 @@ export const ProductDetailView: React.FC = () => {
     addToCart,
     isWishlisted,
     toggleWishlist,
+    isCatalogLoading,
   } = useBoutique();
 
-  const product = products.find((p) => p.id === selectedProductId) ?? products[0] ?? null;
+  const product = selectedProductId
+    ? (products.find((p) => p.id === selectedProductId) ?? null)
+    : (products[0] ?? null);
   const [activeImageIdx, setActiveImageIdx] = useState(0);
   const [selectedSize, setSelectedSize] = useState(product?.sizes[0] ?? '');
   const [selectedColor, setSelectedColor] = useState(
-    product?.colors[0] ?? { name: 'Default', hex: '#D8C3A5' }
+    product?.colors[0] ?? { name: '', hex: '#D8C3A5' }
   );
   const [quantity, setQuantity] = useState(1);
   const [addedFeedback, setAddedFeedback] = useState(false);
@@ -29,19 +32,32 @@ export const ProductDetailView: React.FC = () => {
     if (!product) return;
     setActiveImageIdx(0);
     setSelectedSize(product.sizes[0] ?? '');
-    setSelectedColor(product.colors[0] ?? { name: 'Default', hex: '#D8C3A5' });
+    setSelectedColor(product.colors[0] ?? { name: '', hex: '#D8C3A5' });
     setQuantity(1);
     setAddedFeedback(false);
   }, [product]);
+
+  if (!product && isCatalogLoading) {
+    return (
+      <div className="mx-auto max-w-7xl px-4 pt-8 pb-20 sm:px-6" aria-busy="true">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
+          <div className="aspect-[4/5] w-full animate-pulse rounded-2xl bg-[#EFE7DA] lg:col-span-7" />
+          <div className="h-96 w-full animate-pulse rounded-2xl bg-[#EFE7DA] lg:col-span-5" />
+        </div>
+      </div>
+    );
+  }
 
   if (!product) {
     return (
       <div className="mx-auto max-w-xl px-4 pt-12 pb-20 text-center">
         <h1 className="font-serif text-3xl font-medium text-[#302923]">
-          New Collections Coming Soon
+          {products.length === 0 ? 'New Collections Coming Soon' : 'Piece Unavailable'}
         </h1>
         <p className="mt-2 text-sm text-[#665B51]">
-          This piece is currently unavailable. Explore our boutique collection for available silhouettes.
+          {products.length === 0
+            ? 'Our upcoming curated pieces are currently being prepared for release.'
+            : 'This piece is no longer available. Explore our boutique collection for current silhouettes.'}
         </p>
         <button
           type="button"
@@ -59,15 +75,24 @@ export const ProductDetailView: React.FC = () => {
     .filter(
       (p) =>
         p.id !== product.id &&
-        (p.category === product.category || p.collectionId === product.collectionId)
+        (p.category === product.category ||
+          (product.collectionId !== '' && p.collectionId === product.collectionId))
     )
     .slice(0, 3);
 
+  const hasSelectableVariants =
+    product.sizes.length > 0 && product.colors.length > 0 && selectedSize !== '' && selectedColor.name !== '';
+  const canAddToBag = product.stockStatus !== 'out_of_stock' && hasSelectableVariants;
+
   const availabilityLabel =
-    product.stockStatus === 'out_of_stock' ? 'Currently Unavailable' : 'Available';
+    product.stockStatus === 'out_of_stock'
+      ? 'Currently Unavailable'
+      : !hasSelectableVariants
+      ? 'Sizing Pending Confirmation'
+      : 'Available';
 
   const handleAddToCart = () => {
-    if (product.stockStatus === 'out_of_stock') return;
+    if (!canAddToBag) return;
     addToCart(product, selectedSize, selectedColor, quantity);
     setAddedFeedback(true);
     window.setTimeout(() => setAddedFeedback(false), 1600);
@@ -94,7 +119,7 @@ export const ProductDetailView: React.FC = () => {
         <div className="space-y-3.5 lg:col-span-7">
           <div className="aspect-[4/5] w-full overflow-hidden rounded-2xl border border-[#E4D8C5] bg-[#EFE7DA] sm:aspect-[4/3]">
             <LuxuryImage
-              src={product.images[activeImageIdx] ?? product.images[0]}
+              src={product.images[activeImageIdx] ?? product.images[0] ?? ''}
               alt={`${product.name} — view ${activeImageIdx + 1}`}
               loading="eager"
               className="h-full w-full"
@@ -149,66 +174,70 @@ export const ProductDetailView: React.FC = () => {
           <p className="mt-5 text-sm leading-relaxed text-[#665B51]">{product.description}</p>
 
           {/* Colour Selector */}
-          <div className="mt-6">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold tracking-wider text-[#302923] uppercase">Colour</span>
-              <span className="text-[#665B51]">{selectedColor.name}</span>
+          {product.colors.length > 0 && (
+            <div className="mt-6">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold tracking-wider text-[#302923] uppercase">Colour</span>
+                <span className="text-[#665B51]">{selectedColor.name}</span>
+              </div>
+              <div className="mt-2.5 flex flex-wrap gap-3">
+                {product.colors.map((color) => {
+                  const active = color.name === selectedColor.name;
+                  return (
+                    <button
+                      key={color.name}
+                      type="button"
+                      onClick={() => setSelectedColor(color)}
+                      aria-label={`Select colour ${color.name}`}
+                      aria-pressed={active}
+                      className={`flex min-h-[44px] items-center gap-2.5 rounded-full border px-4 py-2 text-xs transition-colors ${
+                        active
+                          ? 'border-[#302923] bg-[#EFE7DA] font-medium text-[#302923]'
+                          : 'border-[#E4D8C5] bg-[#FCF9F4] text-[#665B51] hover:border-[#B59972]'
+                      }`}
+                    >
+                      <span
+                        className="h-4 w-4 rounded-full border border-[#302923]/20"
+                        style={{ backgroundColor: color.hex }}
+                        aria-hidden="true"
+                      />
+                      <span>{color.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="mt-2.5 flex flex-wrap gap-3">
-              {product.colors.map((color) => {
-                const active = color.name === selectedColor.name;
-                return (
-                  <button
-                    key={color.name}
-                    type="button"
-                    onClick={() => setSelectedColor(color)}
-                    aria-label={`Select colour ${color.name}`}
-                    aria-pressed={active}
-                    className={`flex min-h-[44px] items-center gap-2.5 rounded-full border px-4 py-2 text-xs transition-colors ${
-                      active
-                        ? 'border-[#302923] bg-[#EFE7DA] font-medium text-[#302923]'
-                        : 'border-[#E4D8C5] bg-[#FCF9F4] text-[#665B51] hover:border-[#B59972]'
-                    }`}
-                  >
-                    <span
-                      className="h-4 w-4 rounded-full border border-[#302923]/20"
-                      style={{ backgroundColor: color.hex }}
-                      aria-hidden="true"
-                    />
-                    <span>{color.name}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          )}
 
           {/* Size Selector */}
-          <div className="mt-6">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold tracking-wider text-[#302923] uppercase">Size</span>
-              <span className="text-[#665B51]">Selected: {selectedSize}</span>
+          {product.sizes.length > 0 && (
+            <div className="mt-6">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold tracking-wider text-[#302923] uppercase">Size</span>
+                <span className="text-[#665B51]">Selected: {selectedSize}</span>
+              </div>
+              <div className="mt-2.5 flex flex-wrap gap-2">
+                {product.sizes.map((size) => {
+                  const active = size === selectedSize;
+                  return (
+                    <button
+                      key={size}
+                      type="button"
+                      onClick={() => setSelectedSize(size)}
+                      aria-pressed={active}
+                      className={`min-h-[44px] min-w-[48px] rounded-lg border px-3 text-xs font-medium transition-colors ${
+                        active
+                          ? 'border-[#302923] bg-[#302923] text-[#F6F1E8]'
+                          : 'border-[#E4D8C5] bg-[#FCF9F4] text-[#302923] hover:border-[#B59972]'
+                      }`}
+                    >
+                      {size}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="mt-2.5 flex flex-wrap gap-2">
-              {product.sizes.map((size) => {
-                const active = size === selectedSize;
-                return (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() => setSelectedSize(size)}
-                    aria-pressed={active}
-                    className={`min-h-[44px] min-w-[48px] rounded-lg border px-3 text-xs font-medium transition-colors ${
-                      active
-                        ? 'border-[#302923] bg-[#302923] text-[#F6F1E8]'
-                        : 'border-[#E4D8C5] bg-[#FCF9F4] text-[#302923] hover:border-[#B59972]'
-                    }`}
-                  >
-                    {size}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          )}
 
           {/* Quantity & Actions */}
           <div className="mt-7 space-y-3">
@@ -238,7 +267,7 @@ export const ProductDetailView: React.FC = () => {
               <button
                 type="button"
                 onClick={handleAddToCart}
-                disabled={product.stockStatus === 'out_of_stock'}
+                disabled={!canAddToBag}
                 className="flex h-12 flex-1 items-center justify-center gap-2 rounded-full bg-[#302923] px-6 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35] disabled:opacity-50"
               >
                 {addedFeedback ? (
@@ -249,7 +278,7 @@ export const ProductDetailView: React.FC = () => {
                 ) : (
                   <>
                     <ShoppingBag className="h-4 w-4" strokeWidth={1.75} />
-                    <span>Add to Bag</span>
+                    <span>{canAddToBag ? 'Add to Bag' : 'Currently Unavailable'}</span>
                   </>
                 )}
               </button>

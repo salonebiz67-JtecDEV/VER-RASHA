@@ -56,7 +56,7 @@ export const WishlistView: React.FC = () => {
                 className="aspect-[4/5] w-full overflow-hidden bg-[#EFE7DA] text-left"
               >
                 <LuxuryImage
-                  src={product.images[0]}
+                  src={product.images[0] ?? ''}
                   alt={product.name}
                   className="h-full w-full transition-transform duration-300 hover:scale-[1.03]"
                 />
@@ -82,10 +82,17 @@ export const WishlistView: React.FC = () => {
                 <div className="mt-5 flex items-center gap-2">
                   <button
                     type="button"
-                    disabled={product.stockStatus === 'out_of_stock'}
-                    onClick={() =>
-                      addToCart(product, product.sizes[0], product.colors[0], 1)
+                    disabled={
+                      product.stockStatus === 'out_of_stock' ||
+                      product.sizes.length === 0 ||
+                      product.colors.length === 0
                     }
+                    onClick={() => {
+                      const firstSize = product.sizes[0];
+                      const firstColor = product.colors[0];
+                      if (!firstSize || !firstColor) return;
+                      addToCart(product, firstSize, firstColor, 1);
+                    }}
                     className="flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-full bg-[#302923] px-4 py-2 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35] disabled:opacity-50"
                   >
                     <ShoppingBag className="h-3.5 w-3.5" strokeWidth={1.75} />

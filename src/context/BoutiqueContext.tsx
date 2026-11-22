@@ -8,7 +8,7 @@ import React, {
   useState,
 } from 'react';
 import { APP_BASE_PATH } from '../config/api';
-import { ASSETS, CATEGORIES } from '../data/catalog';
+import { CATEGORIES } from '../data/catalog';
 import { DEFAULT_STORE_SETTINGS } from '../data/storeConfig';
 import { isSupabaseConfigured, SUPABASE_CONFIG_WARNING } from '../lib/supabase';
 import {
@@ -248,7 +248,7 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Live catalog from Supabase (zero invented/starter products)
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<BoutiqueCategoryItem[]>(CATEGORIES);
-  const [heroImageUrl, setHeroImageUrl] = useState<string>(ASSETS.heroGown);
+  const [heroImageUrl, setHeroImageUrl] = useState<string>('');
   const [collections, setCollections] = useState<Collection[]>([]);
   const [campaigns, setCampaigns] = useState<EditorialCampaign[]>([]);
   const [storeSettings, setStoreSettings] = useState<StoreSettings>(DEFAULT_STORE_SETTINGS);
@@ -332,12 +332,8 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     try {
       const snapshot = await fetchBoutiqueCatalog();
       setProducts(snapshot.products);
-      if (snapshot.categories.length > 1) {
-        setCategories(snapshot.categories);
-      } else {
-        setCategories(CATEGORIES);
-      }
-      setHeroImageUrl(snapshot.heroImageUrl || ASSETS.heroGown);
+      setCategories(snapshot.categories.length > 0 ? snapshot.categories : CATEGORIES);
+      setHeroImageUrl(snapshot.heroImageUrl || '');
       setCollections(snapshot.collections);
       setCampaigns(snapshot.campaigns);
       setStoreSettings(snapshot.storeSettings);
@@ -346,7 +342,9 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return true;
     } catch (err) {
       const msg =
-        err instanceof Error ? err.message : 'Unable to load the boutique catalogue from Supabase.';
+        err instanceof Error && err.message
+          ? err.message
+          : 'Unable to load the boutique catalogue right now.';
       setCatalogError(msg);
       setBackendStatus('unavailable');
       setBackendErrorMessage(msg);

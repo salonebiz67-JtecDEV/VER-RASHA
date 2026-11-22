@@ -6,8 +6,11 @@ import http from 'http';
 import path from 'path';
 import { WebSocket, WebSocketServer } from 'ws';
 import type {
+  CampaignStatus,
   CategorySlug,
+  Collection,
   CurrencyCode,
+  EditorialCampaign,
   OrderCustomerInfo,
   OrderLineItem,
   OrderRequestPayload,
@@ -20,14 +23,20 @@ import { formatPrice } from './src/utils/formatCurrency.ts';
 import { ORDER_STATUS_LABELS } from './src/utils/orderStatus.ts';
 import {
   addBoutiqueAnnouncement,
+  addCampaignRecord,
+  addCollectionRecord,
   addProductRecord,
   authorizeCustomerForOrder,
+  deleteCampaignRecord,
+  deleteCollectionRecord,
   deleteProductRecord,
   emergencyRecoverOwnerSlots,
   enrollOwnerDeviceAtomic,
   findActiveDeviceByToken,
   getAllOrders,
+  getCampaignById,
   getCatalogState,
+  getCollectionById,
   getNotificationsByCustomer,
   getOrderById,
   getOrderByReference,
@@ -59,6 +68,7 @@ import {
   type StoredOrderRecord,
   type StoredOwnerDevice,
 } from './server/store.ts';
+import { getSupabaseAdmin, verifySupabaseOwnerBearer } from './server/supabaseAdmin.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const TOKEN_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
@@ -139,6 +149,8 @@ const CATEGORY_LABELS: Record<Exclude<CategorySlug, 'all'>, string> = {
   handbags: 'Leather Goods',
   jewellery: 'Fine Jewellery',
 };
+
+const VALID_CAMPAIGN_STATUSES: CampaignStatus[] = ['draft', 'active', 'scheduled', 'archived'];
 
 const OWNER_UPDATABLE_STATUSES: OrderStatus[] = [
   'PROCESSING',
@@ -347,6 +359,7 @@ interface AuthenticatedRequest extends Request {
   customerId?: string;
   ownerDevice?: StoredOwnerDevice;
   ownerUsedCookie?: boolean;
+  supabaseOwnerUserId?: string;
 }
 
 function requireCustomerAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
@@ -398,18 +411,36 @@ function resolveOwnerAuth(req: AuthenticatedRequest): {
 }
 
 function requireOwnerAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
-  const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method.toUpperCase());
-  const { device, usedCookie, failureReason } = resolveOwnerAuth(req);
+  void (async () => {
+    const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method.toUpperCase());
+    const { device, usedCookie, failureReason } = resolveOwnerAuth(req);
 
-  if (usedCookie && isMutation && !isValidSameOriginOrCustomHeader(req)) {
-    recordOwnerSecurityAudit('AUTH_FAILURE', 'Rejected cross-site mutation without origin match.', {
-      ipHash: hashIp(req),
-    });
-    res.status(403).json({ error: 'Forbidden.' });
-    return;
-  }
+    if (usedCookie && isMutation && !isValidSameOriginOrCustomHeader(req)) {
+      recordOwnerSecurityAudit('AUTH_FAILURE', 'Rejected cross-site mutation without origin match.', {
+        ipHash: hashIp(req),
+      });
+      res.status(403).json({ error: 'Forbidden.' });
+      return;
+    }
 
-  if (!device) {
+    if (device) {
+      req.ownerDevice = device;
+      req.ownerUsedCookie = usedCookie;
+      next();
+      return;
+    }
+
+    // Also support server-verified Supabase Auth JWT when bearer user has DB-assigned 'owner' role
+    const bearerToken = extractBearerToken(req);
+    if (bearerToken) {
+      const verifiedOwner = await verifySupabaseOwnerBearer(bearerToken);
+      if (verifiedOwner) {
+        req.supabaseOwnerUserId = verifiedOwner.userId;
+        next();
+        return;
+      }
+    }
+
     if (failureReason !== 'No owner device token supplied') {
       recordOwnerSecurityAudit('AUTH_FAILURE', failureReason || 'Unauthorized dashboard attempt', {
         deviceId:
@@ -420,12 +451,7 @@ function requireOwnerAuth(req: AuthenticatedRequest, res: Response, next: NextFu
       });
     }
     res.status(401).json({ error: 'Unauthorized.' });
-    return;
-  }
-
-  req.ownerDevice = device;
-  req.ownerUsedCookie = usedCookie;
-  next();
+  })();
 }
 
 function cleanRequiredText(value: unknown, maxLen: number): string | null {
@@ -444,9 +470,14 @@ function cleanOptionalText(value: unknown, maxLen: number): string | undefined {
 
 function isSafeImageUrl(url: string): boolean {
   const trimmed = url.trim();
-  if (!trimmed) return false;
+  if (!trimmed || trimmed.length > 1000) return false;
+  if (trimmed.includes('..') || /[\s<>"'`]/.test(trimmed)) return false;
   if (trimmed.startsWith('/')) {
     return !trimmed.startsWith('//');
+  }
+  if (/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(trimmed)) {
+    // Allow clean Supabase Storage object paths (e.g. collections/spring-capsule.webp)
+    return true;
   }
   try {
     const parsed = new URL(trimmed);
@@ -454,6 +485,113 @@ function isSafeImageUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+function parseCategoryFilter(value: unknown): CategorySlug | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed === 'all') return 'all';
+  if (VALID_CATEGORIES.includes(trimmed as Exclude<CategorySlug, 'all'>)) {
+    return trimmed as CategorySlug;
+  }
+  return null;
+}
+
+function parseOptionalIsoDate(
+  value: unknown
+): { ok: true; value: string | null | undefined } | { ok: false } {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (value === null || value === '') return { ok: true, value: null };
+  if (typeof value !== 'string') return { ok: false };
+  const parsed = Date.parse(value.trim());
+  if (!Number.isFinite(parsed)) return { ok: false };
+  return { ok: true, value: new Date(parsed).toISOString() };
+}
+
+function buildSlugCandidate(title: string, providedSlug?: unknown): string | null {
+  if (providedSlug !== undefined && providedSlug !== null && String(providedSlug).trim() !== '') {
+    const raw = String(providedSlug).trim().toLowerCase();
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(raw) || raw.length > 80) {
+      return null;
+    }
+    return raw;
+  }
+  const base = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48);
+  const suffix = crypto.randomBytes(2).toString('hex');
+  return base ? `${base}-${suffix}` : `collection-${suffix}`;
+}
+
+interface DbCollectionRow {
+  id: string;
+  slug: string;
+  title: string;
+  season: string | null;
+  summary: string | null;
+  image_path: string | null;
+  filter_category: string | null;
+  is_active: boolean | null;
+  sort_order: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DbCampaignRow {
+  id: string;
+  kicker: string | null;
+  title: string;
+  description: string | null;
+  cta_label: string | null;
+  image_path: string | null;
+  target_category: string | null;
+  status: string;
+  starts_at: string | null;
+  ends_at: string | null;
+  sort_order: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapDbCollectionRow(row: DbCollectionRow): Collection {
+  const cat = parseCategoryFilter(row.filter_category) ?? 'all';
+  return {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    season: row.season ?? '',
+    summary: row.summary ?? '',
+    image: row.image_path ?? '',
+    filterCategory: cat,
+    isActive: row.is_active ?? true,
+    sortOrder: row.sort_order ?? 0,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapDbCampaignRow(row: DbCampaignRow): EditorialCampaign {
+  const cat = parseCategoryFilter(row.target_category) ?? 'all';
+  const status: CampaignStatus = VALID_CAMPAIGN_STATUSES.includes(row.status as CampaignStatus)
+    ? (row.status as CampaignStatus)
+    : 'draft';
+  return {
+    id: row.id,
+    kicker: row.kicker ?? '',
+    title: row.title,
+    description: row.description ?? '',
+    ctaLabel: row.cta_label ?? 'Shop Collection',
+    image: row.image_path ?? '',
+    targetCategory: cat,
+    status,
+    startsAt: row.starts_at,
+    endsAt: row.ends_at,
+    sortOrder: row.sort_order ?? 0,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function computeStockStatus(stockCount: number): StockStatus {
@@ -691,10 +829,187 @@ async function startServer(): Promise<void> {
     });
   });
 
-  app.get('/api/catalog', (_req, res) => {
+  app.get('/api/catalog', async (_req, res) => {
+    const admin = getSupabaseAdmin();
+    if (admin) {
+      try {
+        const nowIso = new Date().toISOString();
+        const [productsRes, collectionsRes, campaignsRes, settingsRes] = await Promise.all([
+          admin
+            .from('products')
+            .select(
+              'id, name, subtitle, category_slug, category_label, collection_id, price_usd, description, material, care, is_new_arrival, is_best_seller, product_images(storage_path, sort_order, is_primary), product_variants(size, color_name, color_hex, stock_count, is_available)'
+            )
+            .eq('is_published', true)
+            .order('sort_order', { ascending: true }),
+          admin
+            .from('collections')
+            .select('*')
+            .eq('is_active', true)
+            .order('sort_order', { ascending: true })
+            .order('created_at', { ascending: false }),
+          admin
+            .from('campaigns')
+            .select('*')
+            .eq('status', 'active')
+            .order('sort_order', { ascending: true })
+            .order('created_at', { ascending: false }),
+          admin.from('store_settings').select('*').eq('id', 1).maybeSingle(),
+        ]);
+
+        const products: Product[] = Array.isArray(productsRes.data)
+          ? productsRes.data.map((row: Record<string, unknown>) => {
+              const rawImages = Array.isArray(row.product_images) ? row.product_images : [];
+              const images = rawImages
+                .slice()
+                .sort(
+                  (a: Record<string, unknown>, b: Record<string, unknown>) =>
+                    Number(Boolean(b.is_primary)) - Number(Boolean(a.is_primary)) ||
+                    Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0)
+                )
+                .map((img: Record<string, unknown>) => String(img.storage_path || ''))
+                .filter(Boolean);
+
+              const rawVariants = Array.isArray(row.product_variants) ? row.product_variants : [];
+              const sizes = new Set<string>();
+              const colors = new Map<string, { name: string; hex: string }>();
+              let totalStock = 0;
+
+              for (const v of rawVariants as Record<string, unknown>[]) {
+                if (typeof v.size === 'string' && v.size) sizes.add(v.size);
+                if (typeof v.color_name === 'string' && v.color_name) {
+                  colors.set(v.color_name, {
+                    name: v.color_name,
+                    hex: typeof v.color_hex === 'string' && v.color_hex ? v.color_hex : '#D8C3A5',
+                  });
+                }
+                if (v.is_available !== false) {
+                  totalStock += Math.max(0, Number(v.stock_count ?? 0));
+                }
+              }
+
+              const cat = (parseCategoryFilter(row.category_slug) ?? 'dresses') as Exclude<
+                CategorySlug,
+                'all'
+              >;
+              return {
+                id: String(row.id),
+                name: String(row.name || ''),
+                subtitle: String(row.subtitle || ''),
+                category: cat,
+                categoryLabel: String(row.category_label || CATEGORY_LABELS[cat] || 'Collection'),
+                collectionId: String(row.collection_id || ''),
+                priceUsd: Number(row.price_usd) || 0,
+                images,
+                description: String(row.description || ''),
+                material: String(row.material || ''),
+                care: String(row.care || ''),
+                sizes: Array.from(sizes),
+                colors: Array.from(colors.values()),
+                stockStatus: rawVariants.length > 0 ? computeStockStatus(totalStock) : 'in_stock',
+                stockCount: totalStock,
+                isNewArrival: Boolean(row.is_new_arrival),
+                isBestSeller: Boolean(row.is_best_seller),
+              };
+            })
+          : [];
+
+        const collections = Array.isArray(collectionsRes.data)
+          ? (collectionsRes.data as DbCollectionRow[]).map(mapDbCollectionRow)
+          : [];
+        const campaigns = Array.isArray(campaignsRes.data)
+          ? (campaignsRes.data as DbCampaignRow[])
+              .filter(
+                (c) =>
+                  (!c.starts_at || c.starts_at <= nowIso) && (!c.ends_at || c.ends_at >= nowIso)
+              )
+              .map(mapDbCampaignRow)
+          : [];
+
+        const settingsRow = settingsRes.data as Record<string, unknown> | null;
+        const localCatalog = getCatalogState();
+        res.json({
+          products,
+          collections,
+          campaigns,
+          storeSettings: settingsRow
+            ? {
+                ...localCatalog.storeSettings,
+                boutiqueName:
+                  typeof settingsRow.boutique_name === 'string' && settingsRow.boutique_name.trim()
+                    ? settingsRow.boutique_name.trim()
+                    : localCatalog.storeSettings.boutiqueName,
+              }
+            : localCatalog.storeSettings,
+          announcements: localCatalog.announcements,
+        });
+        return;
+      } catch {
+        res.status(500).json({ error: 'Unable to load boutique catalogue.' });
+        return;
+      }
+    }
+
     syncStoreIfExternallyModified();
     const catalog = getCatalogState();
     res.json(catalog);
+  });
+
+  // Public Collections & Campaigns Feeds
+  app.get('/api/collections', async (_req, res) => {
+    const admin = getSupabaseAdmin();
+    if (admin) {
+      const { data, error } = await admin
+        .from('collections')
+        .select('*')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: false });
+      if (error) {
+        res.status(500).json({ error: 'Unable to fetch collections.' });
+        return;
+      }
+      res.json({ collections: ((data ?? []) as DbCollectionRow[]).map(mapDbCollectionRow) });
+      return;
+    }
+
+    syncStoreIfExternallyModified();
+    const { collections } = getCatalogState();
+    res.json({ collections: collections.filter((c) => c.isActive !== false) });
+  });
+
+  app.get('/api/campaigns', async (_req, res) => {
+    const admin = getSupabaseAdmin();
+    const nowIso = new Date().toISOString();
+    if (admin) {
+      const { data, error } = await admin
+        .from('campaigns')
+        .select('*')
+        .eq('status', 'active')
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: false });
+      if (error) {
+        res.status(500).json({ error: 'Unable to fetch campaigns.' });
+        return;
+      }
+      const activeCampaigns = ((data ?? []) as DbCampaignRow[])
+        .filter(
+          (c) => (!c.starts_at || c.starts_at <= nowIso) && (!c.ends_at || c.ends_at >= nowIso)
+        )
+        .map(mapDbCampaignRow);
+      res.json({ campaigns: activeCampaigns });
+      return;
+    }
+
+    syncStoreIfExternallyModified();
+    const { campaigns } = getCatalogState();
+    const activeCampaigns = campaigns.filter(
+      (c) =>
+        (c.status ?? 'active') === 'active' &&
+        (!c.startsAt || c.startsAt <= nowIso) &&
+        (!c.endsAt || c.endsAt >= nowIso)
+    );
+    res.json({ campaigns: activeCampaigns });
   });
 
   // ---------------------------------------------------------------------------
@@ -879,7 +1194,7 @@ async function startServer(): Promise<void> {
         quantity,
         unitPriceUsd,
         lineTotalUsd,
-        image: product.images[0],
+        image: product.images[0] ?? '',
       });
     }
 
@@ -1282,7 +1597,7 @@ async function startServer(): Promise<void> {
       subtitle,
       category,
       categoryLabel: CATEGORY_LABELS[category],
-      collectionId: cleanOptionalText(body?.collectionId, 60) || 'lumiere-soir',
+      collectionId: cleanOptionalText(body?.collectionId, 60) || '',
       priceUsd: Number(priceUsd.toFixed(2)),
       images,
       description,
@@ -1426,68 +1741,267 @@ async function startServer(): Promise<void> {
     }
   );
 
-  app.patch('/api/owner/campaigns/:id', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
-    const body = req.body as {
-      kicker?: unknown;
-      title?: unknown;
-      description?: unknown;
-      ctaLabel?: unknown;
-      image?: unknown;
-      targetCategory?: unknown;
-    };
-
-    const updated = updateCampaignRecord(req.params.id, (curr) => ({
-      ...curr,
-      kicker: cleanOptionalText(body?.kicker, 80) || curr.kicker,
-      title: cleanOptionalText(body?.title, 160) || curr.title,
-      description: cleanOptionalText(body?.description, 400) || curr.description,
-      ctaLabel: cleanOptionalText(body?.ctaLabel, 60) || curr.ctaLabel,
-      image:
-        typeof body?.image === 'string' && isSafeImageUrl(body.image)
-          ? body.image.trim()
-          : curr.image,
-      targetCategory:
-        typeof body?.targetCategory === 'string' &&
-        (body.targetCategory === 'all' ||
-          VALID_CATEGORIES.includes(body.targetCategory as Exclude<CategorySlug, 'all'>))
-          ? (body.targetCategory as CategorySlug)
-          : curr.targetCategory,
-    }));
-
-    if (!updated) {
-      res.status(404).json({ error: 'Campaign not found.' });
+  // ---------------------------------------------------------------------------
+  // Collections & Campaigns CRUD (Owner Protected for Mutations, Supabase + Store)
+  // ---------------------------------------------------------------------------
+  async function handleOwnerListCollections(_req: AuthenticatedRequest, res: Response): Promise<void> {
+    const admin = getSupabaseAdmin();
+    if (admin) {
+      const { data, error } = await admin
+        .from('collections')
+        .select('*')
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: false });
+      if (error) {
+        res.status(500).json({ error: 'Unable to load collections.' });
+        return;
+      }
+      res.json({ collections: ((data ?? []) as DbCollectionRow[]).map(mapDbCollectionRow) });
       return;
     }
+    syncStoreIfExternallyModified();
+    res.json({ collections: getCatalogState().collections });
+  }
+
+  async function handleCreateCollection(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const body = req.body as
+      | {
+          slug?: unknown;
+          title?: unknown;
+          season?: unknown;
+          summary?: unknown;
+          image?: unknown;
+          imageUrl?: unknown;
+          image_path?: unknown;
+          filterCategory?: unknown;
+          filter_category?: unknown;
+          isActive?: unknown;
+          is_active?: unknown;
+          sortOrder?: unknown;
+          sort_order?: unknown;
+        }
+      | undefined;
+
+    if (!body || typeof body !== 'object') {
+      res.status(400).json({ error: 'Collection request payload is required.' });
+      return;
+    }
+
+    const title = cleanRequiredText(body.title, 100);
+    if (!title) {
+      res.status(400).json({ error: 'Collection title is required (maximum 100 characters).' });
+      return;
+    }
+
+    const summary = cleanRequiredText(body.summary, 500);
+    if (!summary) {
+      res.status(400).json({ error: 'Collection summary is required (maximum 500 characters).' });
+      return;
+    }
+
+    const season = cleanOptionalText(body.season, 80) ?? '';
+    const rawImage = body.image ?? body.imageUrl ?? body.image_path;
+    if (typeof rawImage !== 'string' || !isSafeImageUrl(rawImage)) {
+      res.status(400).json({
+        error: 'Provide a valid HTTPS image URL or Supabase Storage image path for the collection.',
+      });
+      return;
+    }
+    const imagePath = rawImage.trim();
+
+    const rawCategory = body.filterCategory ?? body.filter_category ?? 'all';
+    const filterCategory = parseCategoryFilter(rawCategory);
+    if (!filterCategory) {
+      res.status(400).json({ error: 'Invalid filter category for collection.' });
+      return;
+    }
+
+    const slug = buildSlugCandidate(title, body.slug);
+    if (!slug) {
+      res.status(400).json({ error: 'Invalid collection slug format.' });
+      return;
+    }
+
+    const rawActive = body.isActive ?? body.is_active;
+    if (rawActive !== undefined && typeof rawActive !== 'boolean') {
+      res.status(400).json({ error: 'isActive must be a boolean.' });
+      return;
+    }
+    const isActive = rawActive ?? true;
+
+    const rawSortOrder = body.sortOrder ?? body.sort_order ?? 0;
+    const sortOrder = Number(rawSortOrder);
+    if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 10000) {
+      res.status(400).json({ error: 'sortOrder must be a non-negative integer.' });
+      return;
+    }
+
+    const admin = getSupabaseAdmin();
+    if (admin) {
+      const { data, error } = await admin
+        .from('collections')
+        .insert({
+          slug,
+          title,
+          season,
+          summary,
+          image_path: imagePath,
+          filter_category: filterCategory,
+          is_active: isActive,
+          sort_order: sortOrder,
+        })
+        .select('*')
+        .single();
+
+      if (error) {
+        if (error.code === '23505') {
+          res.status(409).json({ error: 'A collection with this slug already exists.' });
+          return;
+        }
+        res.status(500).json({ error: 'Failed to create collection in database.' });
+        return;
+      }
+
+      const created = mapDbCollectionRow(data as DbCollectionRow);
+      broadcastToAllCustomers({ type: 'catalog:updated' });
+      broadcastToOwners({ type: 'catalog:updated' });
+      res.status(201).json({ collection: created });
+      return;
+    }
+
+    if (getCollectionById(slug)) {
+      res.status(409).json({ error: 'A collection with this slug already exists.' });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const created = addCollectionRecord({
+      id: crypto.randomUUID(),
+      slug,
+      title,
+      season,
+      summary,
+      image: imagePath,
+      filterCategory,
+      isActive,
+      sortOrder,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
     const catalog = getCatalogState();
     broadcastToAllCustomers({ type: 'catalog:updated', ...catalog });
     broadcastToOwners({ type: 'catalog:updated', ...catalog });
-    res.json({ campaign: updated, ...catalog });
-  });
+    res.status(201).json({ collection: created, ...catalog });
+  }
 
-  app.patch('/api/owner/collections/:id', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
-    const body = req.body as {
-      title?: unknown;
-      season?: unknown;
-      summary?: unknown;
-      image?: unknown;
-      filterCategory?: unknown;
-    };
+  async function handleUpdateCollection(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const body = req.body as
+      | {
+          slug?: unknown;
+          title?: unknown;
+          season?: unknown;
+          summary?: unknown;
+          image?: unknown;
+          imageUrl?: unknown;
+          image_path?: unknown;
+          filterCategory?: unknown;
+          filter_category?: unknown;
+          isActive?: unknown;
+          is_active?: unknown;
+          sortOrder?: unknown;
+          sort_order?: unknown;
+        }
+      | undefined;
+
+    if (!body || typeof body !== 'object') {
+      res.status(400).json({ error: 'Invalid collection update payload.' });
+      return;
+    }
+
+    const rawImage = body.image ?? body.imageUrl ?? body.image_path;
+    if (rawImage !== undefined && (typeof rawImage !== 'string' || !isSafeImageUrl(rawImage))) {
+      res.status(400).json({ error: 'Invalid collection image URL or storage path.' });
+      return;
+    }
+
+    const rawCategory = body.filterCategory ?? body.filter_category;
+    const parsedCategory = rawCategory !== undefined ? parseCategoryFilter(rawCategory) : undefined;
+    if (rawCategory !== undefined && !parsedCategory) {
+      res.status(400).json({ error: 'Invalid collection filter category.' });
+      return;
+    }
+
+    const rawActive = body.isActive ?? body.is_active;
+    if (rawActive !== undefined && typeof rawActive !== 'boolean') {
+      res.status(400).json({ error: 'isActive must be a boolean.' });
+      return;
+    }
+
+    const rawSortOrder = body.sortOrder ?? body.sort_order;
+    const parsedSortOrder = rawSortOrder !== undefined ? Number(rawSortOrder) : undefined;
+    if (
+      parsedSortOrder !== undefined &&
+      (!Number.isInteger(parsedSortOrder) || parsedSortOrder < 0 || parsedSortOrder > 10000)
+    ) {
+      res.status(400).json({ error: 'sortOrder must be a non-negative integer.' });
+      return;
+    }
+
+    const admin = getSupabaseAdmin();
+    if (admin) {
+      const patch: Record<string, unknown> = {};
+      const nextTitle = cleanOptionalText(body.title, 100);
+      if (body.title !== undefined && !nextTitle) {
+        res.status(400).json({ error: 'Collection title cannot be empty.' });
+        return;
+      }
+      if (nextTitle) patch.title = nextTitle;
+      if (body.season !== undefined) patch.season = cleanOptionalText(body.season, 80) ?? '';
+      if (body.summary !== undefined) {
+        const nextSummary = cleanRequiredText(body.summary, 500);
+        if (!nextSummary) {
+          res.status(400).json({ error: 'Collection summary cannot be empty.' });
+          return;
+        }
+        patch.summary = nextSummary;
+      }
+      if (typeof rawImage === 'string') patch.image_path = rawImage.trim();
+      if (parsedCategory) patch.filter_category = parsedCategory;
+      if (typeof rawActive === 'boolean') patch.is_active = rawActive;
+      if (parsedSortOrder !== undefined) patch.sort_order = parsedSortOrder;
+
+      const { data, error } = await admin
+        .from('collections')
+        .update(patch)
+        .eq('id', req.params.id)
+        .select('*')
+        .maybeSingle();
+
+      if (error) {
+        res.status(500).json({ error: 'Failed to update collection.' });
+        return;
+      }
+      if (!data) {
+        res.status(404).json({ error: 'Collection not found.' });
+        return;
+      }
+      const updated = mapDbCollectionRow(data as DbCollectionRow);
+      broadcastToAllCustomers({ type: 'catalog:updated' });
+      broadcastToOwners({ type: 'catalog:updated' });
+      res.json({ collection: updated });
+      return;
+    }
 
     const updated = updateCollectionRecord(req.params.id, (curr) => ({
       ...curr,
-      title: cleanOptionalText(body?.title, 100) || curr.title,
-      season: cleanOptionalText(body?.season, 80) || curr.season,
-      summary: cleanOptionalText(body?.summary, 300) || curr.summary,
-      image:
-        typeof body?.image === 'string' && isSafeImageUrl(body.image)
-          ? body.image.trim()
-          : curr.image,
-      filterCategory:
-        typeof body?.filterCategory === 'string' &&
-        (body.filterCategory === 'all' ||
-          VALID_CATEGORIES.includes(body.filterCategory as Exclude<CategorySlug, 'all'>))
-          ? (body.filterCategory as CategorySlug)
-          : curr.filterCategory,
+      title: cleanOptionalText(body.title, 100) || curr.title,
+      season: body.season !== undefined ? (cleanOptionalText(body.season, 80) ?? '') : curr.season,
+      summary: cleanOptionalText(body.summary, 500) || curr.summary,
+      image: typeof rawImage === 'string' ? rawImage.trim() : curr.image,
+      filterCategory: parsedCategory ?? curr.filterCategory,
+      isActive: typeof rawActive === 'boolean' ? rawActive : curr.isActive,
+      sortOrder: parsedSortOrder ?? curr.sortOrder,
+      updatedAt: new Date().toISOString(),
     }));
 
     if (!updated) {
@@ -1498,6 +2012,474 @@ async function startServer(): Promise<void> {
     broadcastToAllCustomers({ type: 'catalog:updated', ...catalog });
     broadcastToOwners({ type: 'catalog:updated', ...catalog });
     res.json({ collection: updated, ...catalog });
+  }
+
+  async function handleDeleteCollection(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const admin = getSupabaseAdmin();
+    if (admin) {
+      const { data, error } = await admin
+        .from('collections')
+        .delete()
+        .eq('id', req.params.id)
+        .select('id')
+        .maybeSingle();
+      if (error) {
+        res.status(500).json({ error: 'Failed to delete collection.' });
+        return;
+      }
+      if (!data) {
+        res.status(404).json({ error: 'Collection not found.' });
+        return;
+      }
+      broadcastToAllCustomers({ type: 'catalog:updated' });
+      broadcastToOwners({ type: 'catalog:updated' });
+      res.json({ ok: true, id: data.id });
+      return;
+    }
+
+    const deleted = deleteCollectionRecord(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ error: 'Collection not found.' });
+      return;
+    }
+    const catalog = getCatalogState();
+    broadcastToAllCustomers({ type: 'catalog:updated', ...catalog });
+    broadcastToOwners({ type: 'catalog:updated', ...catalog });
+    res.json({ ok: true, ...catalog });
+  }
+
+  async function handleOwnerListCampaigns(_req: AuthenticatedRequest, res: Response): Promise<void> {
+    const admin = getSupabaseAdmin();
+    if (admin) {
+      const { data, error } = await admin
+        .from('campaigns')
+        .select('*')
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: false });
+      if (error) {
+        res.status(500).json({ error: 'Unable to load campaigns.' });
+        return;
+      }
+      res.json({ campaigns: ((data ?? []) as DbCampaignRow[]).map(mapDbCampaignRow) });
+      return;
+    }
+    syncStoreIfExternallyModified();
+    res.json({ campaigns: getCatalogState().campaigns });
+  }
+
+  async function handleCreateCampaign(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const body = req.body as
+      | {
+          kicker?: unknown;
+          title?: unknown;
+          description?: unknown;
+          ctaLabel?: unknown;
+          cta_label?: unknown;
+          image?: unknown;
+          imageUrl?: unknown;
+          image_path?: unknown;
+          targetCategory?: unknown;
+          target_category?: unknown;
+          status?: unknown;
+          startsAt?: unknown;
+          starts_at?: unknown;
+          endsAt?: unknown;
+          ends_at?: unknown;
+          sortOrder?: unknown;
+          sort_order?: unknown;
+        }
+      | undefined;
+
+    if (!body || typeof body !== 'object') {
+      res.status(400).json({ error: 'Campaign request payload is required.' });
+      return;
+    }
+
+    const title = cleanRequiredText(body.title, 160);
+    if (!title) {
+      res.status(400).json({ error: 'Campaign title is required (maximum 160 characters).' });
+      return;
+    }
+
+    const description = cleanRequiredText(body.description, 500);
+    if (!description) {
+      res.status(400).json({ error: 'Campaign description is required (maximum 500 characters).' });
+      return;
+    }
+
+    const kicker = cleanOptionalText(body.kicker, 80) ?? '';
+    const ctaLabel = cleanOptionalText(body.ctaLabel ?? body.cta_label, 60) ?? 'Shop Collection';
+
+    const rawImage = body.image ?? body.imageUrl ?? body.image_path;
+    if (typeof rawImage !== 'string' || !isSafeImageUrl(rawImage)) {
+      res.status(400).json({
+        error: 'Provide a valid HTTPS image URL or Supabase Storage image path for the campaign.',
+      });
+      return;
+    }
+    const imagePath = rawImage.trim();
+
+    const targetCategory = parseCategoryFilter(body.targetCategory ?? body.target_category ?? 'all');
+    if (!targetCategory) {
+      res.status(400).json({ error: 'Invalid target category for campaign.' });
+      return;
+    }
+
+    const rawStatus = body.status ?? 'draft';
+    if (typeof rawStatus !== 'string' || !VALID_CAMPAIGN_STATUSES.includes(rawStatus as CampaignStatus)) {
+      res.status(400).json({
+        error: 'Campaign status must be one of: draft, active, scheduled, archived.',
+      });
+      return;
+    }
+    const status = rawStatus as CampaignStatus;
+
+    const parsedStarts = parseOptionalIsoDate(body.startsAt ?? body.starts_at);
+    const parsedEnds = parseOptionalIsoDate(body.endsAt ?? body.ends_at);
+    if (!parsedStarts.ok || !parsedEnds.ok) {
+      res.status(400).json({ error: 'Campaign startsAt and endsAt must be valid ISO-8601 dates.' });
+      return;
+    }
+
+    const startsAt = parsedStarts.value ?? null;
+    const endsAt = parsedEnds.value ?? null;
+
+    if (status === 'scheduled' && !startsAt) {
+      res.status(400).json({ error: 'Scheduled campaigns must include a valid startsAt date.' });
+      return;
+    }
+    if (startsAt && endsAt && Date.parse(endsAt) <= Date.parse(startsAt)) {
+      res.status(400).json({ error: 'Campaign endsAt must be strictly later than startsAt.' });
+      return;
+    }
+
+    const rawSortOrder = body.sortOrder ?? body.sort_order ?? 0;
+    const sortOrder = Number(rawSortOrder);
+    if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 10000) {
+      res.status(400).json({ error: 'sortOrder must be a non-negative integer.' });
+      return;
+    }
+
+    const admin = getSupabaseAdmin();
+    if (admin) {
+      const { data, error } = await admin
+        .from('campaigns')
+        .insert({
+          kicker,
+          title,
+          description,
+          cta_label: ctaLabel,
+          image_path: imagePath,
+          target_category: targetCategory,
+          status,
+          starts_at: startsAt,
+          ends_at: endsAt,
+          sort_order: sortOrder,
+        })
+        .select('*')
+        .single();
+
+      if (error) {
+        res.status(500).json({ error: 'Failed to create campaign in database.' });
+        return;
+      }
+
+      const created = mapDbCampaignRow(data as DbCampaignRow);
+      broadcastToAllCustomers({ type: 'catalog:updated' });
+      broadcastToOwners({ type: 'catalog:updated' });
+      res.status(201).json({ campaign: created });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const created = addCampaignRecord({
+      id: crypto.randomUUID(),
+      kicker,
+      title,
+      description,
+      ctaLabel,
+      image: imagePath,
+      targetCategory,
+      status,
+      startsAt,
+      endsAt,
+      sortOrder,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+    const catalog = getCatalogState();
+    broadcastToAllCustomers({ type: 'catalog:updated', ...catalog });
+    broadcastToOwners({ type: 'catalog:updated', ...catalog });
+    res.status(201).json({ campaign: created, ...catalog });
+  }
+
+  async function handleUpdateCampaign(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const body = req.body as
+      | {
+          kicker?: unknown;
+          title?: unknown;
+          description?: unknown;
+          ctaLabel?: unknown;
+          cta_label?: unknown;
+          image?: unknown;
+          imageUrl?: unknown;
+          image_path?: unknown;
+          targetCategory?: unknown;
+          target_category?: unknown;
+          status?: unknown;
+          startsAt?: unknown;
+          starts_at?: unknown;
+          endsAt?: unknown;
+          ends_at?: unknown;
+          sortOrder?: unknown;
+          sort_order?: unknown;
+        }
+      | undefined;
+
+    if (!body || typeof body !== 'object') {
+      res.status(400).json({ error: 'Invalid campaign update payload.' });
+      return;
+    }
+
+    const rawImage = body.image ?? body.imageUrl ?? body.image_path;
+    if (rawImage !== undefined && (typeof rawImage !== 'string' || !isSafeImageUrl(rawImage))) {
+      res.status(400).json({ error: 'Invalid campaign image URL or storage path.' });
+      return;
+    }
+
+    const rawCategory = body.targetCategory ?? body.target_category;
+    const parsedCategory = rawCategory !== undefined ? parseCategoryFilter(rawCategory) : undefined;
+    if (rawCategory !== undefined && !parsedCategory) {
+      res.status(400).json({ error: 'Invalid campaign target category.' });
+      return;
+    }
+
+    let parsedStatus: CampaignStatus | undefined;
+    if (body.status !== undefined) {
+      if (
+        typeof body.status !== 'string' ||
+        !VALID_CAMPAIGN_STATUSES.includes(body.status as CampaignStatus)
+      ) {
+        res.status(400).json({
+          error: 'Campaign status must be one of: draft, active, scheduled, archived.',
+        });
+        return;
+      }
+      parsedStatus = body.status as CampaignStatus;
+    }
+
+    const parsedStarts = parseOptionalIsoDate(body.startsAt ?? body.starts_at);
+    const parsedEnds = parseOptionalIsoDate(body.endsAt ?? body.ends_at);
+    if (!parsedStarts.ok || !parsedEnds.ok) {
+      res.status(400).json({ error: 'Campaign startsAt and endsAt must be valid ISO-8601 dates.' });
+      return;
+    }
+
+    const rawSortOrder = body.sortOrder ?? body.sort_order;
+    const parsedSortOrder = rawSortOrder !== undefined ? Number(rawSortOrder) : undefined;
+    if (
+      parsedSortOrder !== undefined &&
+      (!Number.isInteger(parsedSortOrder) || parsedSortOrder < 0 || parsedSortOrder > 10000)
+    ) {
+      res.status(400).json({ error: 'sortOrder must be a non-negative integer.' });
+      return;
+    }
+
+    const admin = getSupabaseAdmin();
+    if (admin) {
+      const { data: existingRow, error: fetchErr } = await admin
+        .from('campaigns')
+        .select('*')
+        .eq('id', req.params.id)
+        .maybeSingle();
+
+      if (fetchErr) {
+        res.status(500).json({ error: 'Failed to load campaign.' });
+        return;
+      }
+      if (!existingRow) {
+        res.status(404).json({ error: 'Campaign not found.' });
+        return;
+      }
+
+      const existing = existingRow as DbCampaignRow;
+      const nextStartsAt = parsedStarts.value !== undefined ? parsedStarts.value : existing.starts_at;
+      const nextEndsAt = parsedEnds.value !== undefined ? parsedEnds.value : existing.ends_at;
+      const nextStatus = parsedStatus ?? (existing.status as CampaignStatus);
+
+      if (nextStatus === 'scheduled' && !nextStartsAt) {
+        res.status(400).json({ error: 'Scheduled campaigns must include a valid startsAt date.' });
+        return;
+      }
+      if (nextStartsAt && nextEndsAt && Date.parse(nextEndsAt) <= Date.parse(nextStartsAt)) {
+        res.status(400).json({ error: 'Campaign endsAt must be strictly later than startsAt.' });
+        return;
+      }
+
+      const patch: Record<string, unknown> = {
+        status: nextStatus,
+        starts_at: nextStartsAt,
+        ends_at: nextEndsAt,
+      };
+      if (body.kicker !== undefined) patch.kicker = cleanOptionalText(body.kicker, 80) ?? '';
+      if (body.title !== undefined) {
+        const nextTitle = cleanRequiredText(body.title, 160);
+        if (!nextTitle) {
+          res.status(400).json({ error: 'Campaign title cannot be empty.' });
+          return;
+        }
+        patch.title = nextTitle;
+      }
+      if (body.description !== undefined) {
+        const nextDesc = cleanRequiredText(body.description, 500);
+        if (!nextDesc) {
+          res.status(400).json({ error: 'Campaign description cannot be empty.' });
+          return;
+        }
+        patch.description = nextDesc;
+      }
+      const nextCta = cleanOptionalText(body.ctaLabel ?? body.cta_label, 60);
+      if (nextCta) patch.cta_label = nextCta;
+      if (typeof rawImage === 'string') patch.image_path = rawImage.trim();
+      if (parsedCategory) patch.target_category = parsedCategory;
+      if (parsedSortOrder !== undefined) patch.sort_order = parsedSortOrder;
+
+      const { data: updatedRow, error: updateErr } = await admin
+        .from('campaigns')
+        .update(patch)
+        .eq('id', req.params.id)
+        .select('*')
+        .single();
+
+      if (updateErr) {
+        res.status(500).json({ error: 'Failed to update campaign.' });
+        return;
+      }
+
+      const updated = mapDbCampaignRow(updatedRow as DbCampaignRow);
+      broadcastToAllCustomers({ type: 'catalog:updated' });
+      broadcastToOwners({ type: 'catalog:updated' });
+      res.json({ campaign: updated });
+      return;
+    }
+
+    const existing = getCampaignById(req.params.id);
+    if (!existing) {
+      res.status(404).json({ error: 'Campaign not found.' });
+      return;
+    }
+    const nextStartsAt =
+      parsedStarts.value !== undefined ? parsedStarts.value : (existing.startsAt ?? null);
+    const nextEndsAt =
+      parsedEnds.value !== undefined ? parsedEnds.value : (existing.endsAt ?? null);
+    const nextStatus = parsedStatus ?? existing.status ?? 'draft';
+
+    if (nextStatus === 'scheduled' && !nextStartsAt) {
+      res.status(400).json({ error: 'Scheduled campaigns must include a valid startsAt date.' });
+      return;
+    }
+    if (nextStartsAt && nextEndsAt && Date.parse(nextEndsAt) <= Date.parse(nextStartsAt)) {
+      res.status(400).json({ error: 'Campaign endsAt must be strictly later than startsAt.' });
+      return;
+    }
+
+    const updated = updateCampaignRecord(req.params.id, (curr) => ({
+      ...curr,
+      kicker: body.kicker !== undefined ? (cleanOptionalText(body.kicker, 80) ?? '') : curr.kicker,
+      title: cleanOptionalText(body.title, 160) || curr.title,
+      description: cleanOptionalText(body.description, 500) || curr.description,
+      ctaLabel: cleanOptionalText(body.ctaLabel ?? body.cta_label, 60) || curr.ctaLabel,
+      image: typeof rawImage === 'string' ? rawImage.trim() : curr.image,
+      targetCategory: parsedCategory ?? curr.targetCategory,
+      status: nextStatus,
+      startsAt: nextStartsAt,
+      endsAt: nextEndsAt,
+      sortOrder: parsedSortOrder ?? curr.sortOrder,
+      updatedAt: new Date().toISOString(),
+    }));
+
+    const catalog = getCatalogState();
+    broadcastToAllCustomers({ type: 'catalog:updated', ...catalog });
+    broadcastToOwners({ type: 'catalog:updated', ...catalog });
+    res.json({ campaign: updated, ...catalog });
+  }
+
+  async function handleDeleteCampaign(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const admin = getSupabaseAdmin();
+    if (admin) {
+      const { data, error } = await admin
+        .from('campaigns')
+        .delete()
+        .eq('id', req.params.id)
+        .select('id')
+        .maybeSingle();
+      if (error) {
+        res.status(500).json({ error: 'Failed to delete campaign.' });
+        return;
+      }
+      if (!data) {
+        res.status(404).json({ error: 'Campaign not found.' });
+        return;
+      }
+      broadcastToAllCustomers({ type: 'catalog:updated' });
+      broadcastToOwners({ type: 'catalog:updated' });
+      res.json({ ok: true, id: data.id });
+      return;
+    }
+
+    const deleted = deleteCampaignRecord(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ error: 'Campaign not found.' });
+      return;
+    }
+    const catalog = getCatalogState();
+    broadcastToAllCustomers({ type: 'catalog:updated', ...catalog });
+    broadcastToOwners({ type: 'catalog:updated', ...catalog });
+    res.json({ ok: true, ...catalog });
+  }
+
+  app.get('/api/owner/collections', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void handleOwnerListCollections(req, res);
+  });
+  app.post('/api/collections', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void handleCreateCollection(req, res);
+  });
+  app.post('/api/owner/collections', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void handleCreateCollection(req, res);
+  });
+  app.patch('/api/collections/:id', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void handleUpdateCollection(req, res);
+  });
+  app.patch('/api/owner/collections/:id', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void handleUpdateCollection(req, res);
+  });
+  app.delete('/api/collections/:id', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void handleDeleteCollection(req, res);
+  });
+  app.delete('/api/owner/collections/:id', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void handleDeleteCollection(req, res);
+  });
+
+  app.get('/api/owner/campaigns', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void handleOwnerListCampaigns(req, res);
+  });
+  app.post('/api/campaigns', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void handleCreateCampaign(req, res);
+  });
+  app.post('/api/owner/campaigns', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void handleCreateCampaign(req, res);
+  });
+  app.patch('/api/campaigns/:id', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void handleUpdateCampaign(req, res);
+  });
+  app.patch('/api/owner/campaigns/:id', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void handleUpdateCampaign(req, res);
+  });
+  app.delete('/api/campaigns/:id', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void handleDeleteCampaign(req, res);
+  });
+  app.delete('/api/owner/campaigns/:id', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void handleDeleteCampaign(req, res);
   });
 
   app.post('/api/owner/announcements', requireOwnerAuth, (req: AuthenticatedRequest, res) => {

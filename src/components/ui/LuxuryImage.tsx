@@ -3,7 +3,7 @@ import { Sparkles } from 'lucide-react';
 import { resolveAssetUrl } from '../../config/api';
 
 interface LuxuryImageProps {
-  src: string;
+  src?: string | null;
   alt: string;
   className?: string;
   imgClassName?: string;
@@ -17,7 +17,7 @@ export const LuxuryImage: React.FC<LuxuryImageProps> = ({
   imgClassName = '',
   loading = 'lazy',
 }) => {
-  const resolvedSrc = resolveAssetUrl(src);
+  const resolvedSrc = resolveAssetUrl(src ?? '');
   const [hasError, setHasError] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
 
@@ -26,7 +26,7 @@ export const LuxuryImage: React.FC<LuxuryImageProps> = ({
     setIsLoaded(false);
   }, [resolvedSrc]);
 
-  if (hasError) {
+  if (!resolvedSrc || hasError) {
     return (
       <div
         className={`flex flex-col items-center justify-center bg-[#EFE7DA] text-[#665B51] p-6 text-center ${className}`}
