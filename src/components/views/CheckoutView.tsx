@@ -617,8 +617,9 @@ export const CheckoutView: React.FC = () => {
                 <li key={item.id} className="flex gap-3.5 py-3.5">
                   <div className="aspect-[4/5] w-16 shrink-0 overflow-hidden rounded-lg border border-[#E4D8C5]/70 bg-[#EFE7DA]">
                     <LuxuryImage
-                      src={product.images[0] ?? ''}
+                      src={product.cardImages?.[0] ?? product.images[0] ?? ''}
                       alt={product.name}
+                      loading="lazy"
                       className="h-full w-full"
                     />
                   </div>

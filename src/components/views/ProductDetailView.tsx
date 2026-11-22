@@ -122,6 +122,7 @@ export const ProductDetailView: React.FC = () => {
               src={product.images[activeImageIdx] ?? product.images[0] ?? ''}
               alt={`${product.name} — view ${activeImageIdx + 1}`}
               loading="eager"
+              fetchPriority="high"
               className="h-full w-full"
             />
           </div>
@@ -144,8 +145,9 @@ export const ProductDetailView: React.FC = () => {
                     }`}
                   >
                     <LuxuryImage
-                      src={img}
+                      src={product.cardImages?.[idx] ?? img}
                       alt={`${product.name} alternate view ${idx + 1}`}
+                      loading="lazy"
                       className="h-full w-full"
                     />
                   </button>

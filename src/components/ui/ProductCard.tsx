@@ -30,8 +30,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           aria-label={`View ${product.name}`}
         >
           <LuxuryImage
-            src={product.images[0] ?? ''}
+            src={product.cardImages?.[0] ?? product.images[0] ?? ''}
             alt={product.name}
+            loading="lazy"
+            sizes="(max-width: 640px) 46vw, (max-width: 1024px) 32vw, 24vw"
             className="h-full w-full"
             imgClassName="transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-[1.035]"
           />

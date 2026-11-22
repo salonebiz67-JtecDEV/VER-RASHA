@@ -29,7 +29,17 @@ export interface CatalogSnapshot {
   heroImageUrl: string;
 }
 
-export function getBoutiqueMediaUrl(storagePath: string | null | undefined): string {
+function appendCacheVersion(url: string, version?: number | null): string {
+  if (!url || !version || version < 1) return url;
+  if (/[?&]v=\d+/.test(url)) return url;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}v=${Math.floor(version)}`;
+}
+
+export function getBoutiqueMediaUrl(
+  storagePath: string | null | undefined,
+  version?: number | null
+): string {
   const trimmed = (storagePath ?? '').trim();
   if (!trimmed) return '';
 
@@ -48,18 +58,21 @@ export function getBoutiqueMediaUrl(storagePath: string | null | undefined): str
     lower.startsWith('http://') ||
     lower.startsWith('blob:')
   ) {
-    return trimmed;
+    return appendCacheVersion(trimmed, version);
   }
 
   if (!supabase) return '';
   const cleanPath = trimmed.replace(/^\/+/, '');
   if (!cleanPath || cleanPath.includes('..')) return '';
   const { data } = supabase.storage.from(BOUTIQUE_MEDIA_BUCKET).getPublicUrl(cleanPath);
-  return data.publicUrl;
+  return appendCacheVersion(data.publicUrl, version);
 }
 
 interface DbProductImageRow {
   storage_path: string;
+  card_storage_path?: string | null;
+  detail_storage_path?: string | null;
+  image_version?: number | null;
   sort_order: number | null;
   is_primary: boolean | null;
 }
@@ -94,6 +107,7 @@ interface DbCategoryRow {
   slug: string;
   label: string;
   image_path: string | null;
+  image_version?: number | null;
   sort_order: number | null;
 }
 
@@ -104,6 +118,7 @@ interface DbCollectionRow {
   season: string | null;
   summary: string | null;
   image_path: string | null;
+  image_version?: number | null;
   filter_category: string | null;
   is_active: boolean | null;
   sort_order: number | null;
@@ -118,6 +133,7 @@ interface DbCampaignRow {
   description: string | null;
   cta_label: string | null;
   image_path: string | null;
+  image_version?: number | null;
   target_category: string | null;
   status: string | null;
   starts_at: string | null;
@@ -135,6 +151,7 @@ interface DbStoreSettingsRow {
   gift_presentation_label: string | null;
   pickup_location_note: string | null;
   hero_image_path: string | null;
+  hero_image_version?: number | null;
   collections: unknown;
   campaigns: unknown;
 }
@@ -169,13 +186,18 @@ function normalizeFilterCategory(raw: string | null | undefined): CategorySlug {
 }
 
 function mapProductRow(row: DbProductRow): Product {
-  const images = [...(row.product_images ?? [])]
-    .sort(
-      (a, b) =>
-        Number(Boolean(b.is_primary)) - Number(Boolean(a.is_primary)) ||
-        (a.sort_order ?? 0) - (b.sort_order ?? 0)
-    )
-    .map((img) => getBoutiqueMediaUrl(img.storage_path))
+  const sortedImages = [...(row.product_images ?? [])].sort(
+    (a, b) =>
+      Number(Boolean(b.is_primary)) - Number(Boolean(a.is_primary)) ||
+      (a.sort_order ?? 0) - (b.sort_order ?? 0)
+  );
+
+  const images = sortedImages
+    .map((img) => getBoutiqueMediaUrl(img.detail_storage_path || img.storage_path, img.image_version))
+    .filter(Boolean);
+
+  const cardImages = sortedImages
+    .map((img) => getBoutiqueMediaUrl(img.card_storage_path || img.storage_path, img.image_version))
     .filter(Boolean);
 
   const variants = row.product_variants ?? [];
@@ -218,6 +240,7 @@ function mapProductRow(row: DbProductRow): Product {
     collectionId: row.collection_id ?? '',
     priceUsd: Number(row.price_usd) || 0,
     images,
+    cardImages: cardImages.length > 0 ? cardImages : images,
     description: row.description ?? '',
     material: row.material ?? '',
     care: row.care ?? '',
@@ -237,7 +260,7 @@ function mapCollectionRow(row: DbCollectionRow): Collection {
     title: row.title,
     season: row.season ?? '',
     summary: row.summary ?? '',
-    image: getBoutiqueMediaUrl(row.image_path),
+    image: getBoutiqueMediaUrl(row.image_path, row.image_version),
     filterCategory: normalizeFilterCategory(row.filter_category),
     isActive: row.is_active ?? true,
     sortOrder: row.sort_order ?? 0,
@@ -257,7 +280,7 @@ function mapCampaignRow(row: DbCampaignRow): EditorialCampaign {
     title: row.title,
     description: row.description ?? '',
     ctaLabel: row.cta_label || 'Shop Collection',
-    image: getBoutiqueMediaUrl(row.image_path),
+    image: getBoutiqueMediaUrl(row.image_path, row.image_version),
     targetCategory: normalizeFilterCategory(row.target_category),
     status,
     startsAt: row.starts_at,
@@ -268,6 +291,92 @@ function mapCampaignRow(row: DbCampaignRow): EditorialCampaign {
   };
 }
 
+async function queryProductsWithVariantFallback() {
+  if (!supabase) {
+    throw new Error(SUPABASE_CONFIG_WARNING);
+  }
+
+  const extended = await supabase
+    .from('products')
+    .select(
+      `
+      id,
+      name,
+      subtitle,
+      category_slug,
+      category_label,
+      collection_id,
+      price_usd,
+      description,
+      material,
+      care,
+      is_new_arrival,
+      is_best_seller,
+      sort_order,
+      product_images (
+        storage_path,
+        card_storage_path,
+        detail_storage_path,
+        image_version,
+        sort_order,
+        is_primary
+      ),
+      product_variants (
+        id,
+        size,
+        color_name,
+        color_hex,
+        stock_count,
+        is_available
+      )
+    `
+    )
+    .eq('is_published', true)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: false });
+
+  if (!extended.error) {
+    return extended;
+  }
+
+  // Fallback when migration 202611220005 has not been applied yet on a live database
+  return supabase
+    .from('products')
+    .select(
+      `
+      id,
+      name,
+      subtitle,
+      category_slug,
+      category_label,
+      collection_id,
+      price_usd,
+      description,
+      material,
+      care,
+      is_new_arrival,
+      is_best_seller,
+      sort_order,
+      product_images (
+        storage_path,
+        sort_order,
+        is_primary
+      ),
+      product_variants (
+        id,
+        size,
+        color_name,
+        color_hex,
+        stock_count,
+        is_available
+      )
+    `
+    )
+    .eq('is_published', true)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: false });
+}
+
 export async function fetchBoutiqueCatalog(): Promise<CatalogSnapshot> {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error(SUPABASE_CONFIG_WARNING);
@@ -276,44 +385,10 @@ export async function fetchBoutiqueCatalog(): Promise<CatalogSnapshot> {
   const nowIso = new Date().toISOString();
 
   const [productsRes, categoriesRes, collectionsRes, campaignsRes, settingsRes] = await Promise.all([
-    supabase
-      .from('products')
-      .select(
-        `
-        id,
-        name,
-        subtitle,
-        category_slug,
-        category_label,
-        collection_id,
-        price_usd,
-        description,
-        material,
-        care,
-        is_new_arrival,
-        is_best_seller,
-        sort_order,
-        product_images (
-          storage_path,
-          sort_order,
-          is_primary
-        ),
-        product_variants (
-          id,
-          size,
-          color_name,
-          color_hex,
-          stock_count,
-          is_available
-        )
-      `
-      )
-      .eq('is_published', true)
-      .order('sort_order', { ascending: true })
-      .order('created_at', { ascending: false }),
+    queryProductsWithVariantFallback(),
     supabase
       .from('categories')
-      .select('slug, label, image_path, sort_order')
+      .select('*')
       .eq('is_active', true)
       .order('sort_order', { ascending: true }),
     supabase
@@ -338,7 +413,7 @@ export async function fetchBoutiqueCatalog(): Promise<CatalogSnapshot> {
   const products = ((productsRes.data ?? []) as DbProductRow[]).map(mapProductRow);
 
   const dbCategories = ((categoriesRes.data ?? []) as DbCategoryRow[]).map((cat) => {
-    const resolvedImage = getBoutiqueMediaUrl(cat.image_path);
+    const resolvedImage = getBoutiqueMediaUrl(cat.image_path, cat.image_version);
     return {
       slug: cat.slug as CategorySlug,
       label: cat.label,
@@ -405,7 +480,7 @@ export async function fetchBoutiqueCatalog(): Promise<CatalogSnapshot> {
   }
 
   const heroImageUrl = settingsRow?.hero_image_path
-    ? getBoutiqueMediaUrl(settingsRow.hero_image_path)
+    ? getBoutiqueMediaUrl(settingsRow.hero_image_path, settingsRow.hero_image_version)
     : '';
 
   return {

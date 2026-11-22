@@ -29,3 +29,13 @@ export function resolveAssetUrl(src: string): string {
 
   return `${APP_BASE_PATH}${trimmed}`;
 }
+
+export function resolveApiUrl(apiPath: string): string {
+  const cleanPath = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
+  const rawBase = (import.meta.env.VITE_API_URL as string | undefined)?.trim() || '';
+  if (!rawBase) {
+    return cleanPath;
+  }
+  return `${rawBase.replace(/\/+$/, '')}${cleanPath}`;
+}
+

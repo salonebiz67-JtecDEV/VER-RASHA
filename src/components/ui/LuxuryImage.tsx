@@ -8,6 +8,8 @@ interface LuxuryImageProps {
   className?: string;
   imgClassName?: string;
   loading?: 'lazy' | 'eager';
+  fetchPriority?: 'high' | 'low' | 'auto';
+  sizes?: string;
 }
 
 export const LuxuryImage: React.FC<LuxuryImageProps> = ({
@@ -16,6 +18,8 @@ export const LuxuryImage: React.FC<LuxuryImageProps> = ({
   className = '',
   imgClassName = '',
   loading = 'lazy',
+  fetchPriority = 'auto',
+  sizes,
 }) => {
   const resolvedSrc = resolveAssetUrl(src ?? '');
   const [hasError, setHasError] = useState(false);
@@ -50,6 +54,8 @@ export const LuxuryImage: React.FC<LuxuryImageProps> = ({
         alt={alt}
         loading={loading}
         decoding="async"
+        fetchPriority={fetchPriority}
+        sizes={sizes}
         referrerPolicy="no-referrer"
         onLoad={() => setIsLoaded(true)}
         onError={() => setHasError(true)}

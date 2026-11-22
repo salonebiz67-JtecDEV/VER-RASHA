@@ -106,11 +106,7 @@ Deno.serve(async (req: Request) => {
         subtitle,
         price_usd,
         is_published,
-        product_images (
-          storage_path,
-          is_primary,
-          sort_order
-        ),
+        product_images (*),
         product_variants (
           id,
           size,
@@ -192,13 +188,24 @@ Deno.serve(async (req: Request) => {
           b: { is_primary: boolean; sort_order: number }
         ) => Number(b.is_primary) - Number(a.is_primary) || a.sort_order - b.sort_order
       );
-      const primaryPath = images[0]?.storage_path ?? '';
-      const imageUrl =
+      const firstImage = images[0] as
+        | { storage_path?: string; card_storage_path?: string | null; image_version?: number | null }
+        | undefined;
+      const primaryPath = firstImage?.card_storage_path || firstImage?.storage_path || '';
+      const imgVersion =
+        typeof firstImage?.image_version === 'number' && firstImage.image_version >= 1
+          ? firstImage.image_version
+          : null;
+      const baseImageUrl =
         primaryPath.startsWith('http://') || primaryPath.startsWith('https://')
           ? primaryPath
           : primaryPath && supabaseUrl
           ? `${supabaseUrl}/storage/v1/object/public/boutique-media/${primaryPath.replace(/^\/+/, '')}`
           : '';
+      const imageUrl =
+        baseImageUrl && imgVersion && !/[?&]v=\d+/.test(baseImageUrl)
+          ? `${baseImageUrl}${baseImageUrl.includes('?') ? '&' : '?'}v=${imgVersion}`
+          : baseImageUrl;
 
       preparedOrderItems.push({
         product_id: product.id,

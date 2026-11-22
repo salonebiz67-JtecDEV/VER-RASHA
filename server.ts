@@ -4,6 +4,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
+import multer from 'multer';
 import { WebSocket, WebSocketServer } from 'ws';
 import type {
   CampaignStatus,
@@ -21,6 +22,14 @@ import type {
 } from './src/types/boutique.ts';
 import { formatPrice } from './src/utils/formatCurrency.ts';
 import { ORDER_STATUS_LABELS } from './src/utils/orderStatus.ts';
+import {
+  MAX_UPLOAD_BYTES,
+  appendVersionQuery,
+  deleteUnreferencedStorageObjects,
+  getPublicMediaUrl,
+  sanitizeScopeSegment,
+  uploadOptimizedMediaToSupabase,
+} from './server/imageStorage.ts';
 import {
   addBoutiqueAnnouncement,
   addCampaignRecord,
@@ -532,6 +541,7 @@ interface DbCollectionRow {
   season: string | null;
   summary: string | null;
   image_path: string | null;
+  image_version?: number | null;
   filter_category: string | null;
   is_active: boolean | null;
   sort_order: number | null;
@@ -546,6 +556,7 @@ interface DbCampaignRow {
   description: string | null;
   cta_label: string | null;
   image_path: string | null;
+  image_version?: number | null;
   target_category: string | null;
   status: string;
   starts_at: string | null;
@@ -553,6 +564,28 @@ interface DbCampaignRow {
   sort_order: number | null;
   created_at: string;
   updated_at: string;
+}
+
+function resolveCatalogMediaPath(rawPath: string | null, version?: number | null): string {
+  const trimmed = (rawPath ?? '').trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return typeof version === 'number' && version >= 1
+      ? appendVersionQuery(trimmed, version)
+      : trimmed;
+  }
+  const admin = getSupabaseAdmin();
+  if (admin && !trimmed.startsWith('/')) {
+    return getPublicMediaUrl(admin, trimmed, version ?? 1);
+  }
+  return trimmed;
+}
+
+function isUuidString(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim())
+  );
 }
 
 function mapDbCollectionRow(row: DbCollectionRow): Collection {
@@ -563,7 +596,7 @@ function mapDbCollectionRow(row: DbCollectionRow): Collection {
     title: row.title,
     season: row.season ?? '',
     summary: row.summary ?? '',
-    image: row.image_path ?? '',
+    image: resolveCatalogMediaPath(row.image_path, row.image_version),
     filterCategory: cat,
     isActive: row.is_active ?? true,
     sortOrder: row.sort_order ?? 0,
@@ -583,7 +616,7 @@ function mapDbCampaignRow(row: DbCampaignRow): EditorialCampaign {
     title: row.title,
     description: row.description ?? '',
     ctaLabel: row.cta_label ?? 'Shop Collection',
-    image: row.image_path ?? '',
+    image: resolveCatalogMediaPath(row.image_path, row.image_version),
     targetCategory: cat,
     status,
     startsAt: row.starts_at,
@@ -838,7 +871,7 @@ async function startServer(): Promise<void> {
           admin
             .from('products')
             .select(
-              'id, name, subtitle, category_slug, category_label, collection_id, price_usd, description, material, care, is_new_arrival, is_best_seller, product_images(storage_path, sort_order, is_primary), product_variants(size, color_name, color_hex, stock_count, is_available)'
+              'id, name, subtitle, category_slug, category_label, collection_id, price_usd, description, material, care, is_new_arrival, is_best_seller, product_images(*), product_variants(size, color_name, color_hex, stock_count, is_available)'
             )
             .eq('is_published', true)
             .order('sort_order', { ascending: true }),
@@ -860,14 +893,30 @@ async function startServer(): Promise<void> {
         const products: Product[] = Array.isArray(productsRes.data)
           ? productsRes.data.map((row: Record<string, unknown>) => {
               const rawImages = Array.isArray(row.product_images) ? row.product_images : [];
-              const images = rawImages
+              const sortedRaw = rawImages
                 .slice()
                 .sort(
                   (a: Record<string, unknown>, b: Record<string, unknown>) =>
                     Number(Boolean(b.is_primary)) - Number(Boolean(a.is_primary)) ||
                     Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0)
+                );
+
+              const images = sortedRaw
+                .map((img: Record<string, unknown>) =>
+                  resolveCatalogMediaPath(
+                    String(img.detail_storage_path || img.storage_path || ''),
+                    typeof img.image_version === 'number' ? img.image_version : 1
+                  )
                 )
-                .map((img: Record<string, unknown>) => String(img.storage_path || ''))
+                .filter(Boolean);
+
+              const cardImages = sortedRaw
+                .map((img: Record<string, unknown>) =>
+                  resolveCatalogMediaPath(
+                    String(img.card_storage_path || img.storage_path || ''),
+                    typeof img.image_version === 'number' ? img.image_version : 1
+                  )
+                )
                 .filter(Boolean);
 
               const rawVariants = Array.isArray(row.product_variants) ? row.product_variants : [];
@@ -901,6 +950,7 @@ async function startServer(): Promise<void> {
                 collectionId: String(row.collection_id || ''),
                 priceUsd: Number(row.price_usd) || 0,
                 images,
+                cardImages: cardImages.length > 0 ? cardImages : images,
                 description: String(row.description || ''),
                 material: String(row.material || ''),
                 care: String(row.care || ''),
@@ -1704,16 +1754,339 @@ async function startServer(): Promise<void> {
     res.json({ product: updated, ...catalog });
   });
 
-  app.delete('/api/owner/products/:id', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
-    const deleted = deleteProductRecord(req.params.id);
-    if (!deleted) {
-      res.status(404).json({ error: 'Product not found.' });
-      return;
+  // ---------------------------------------------------------------------------
+  // Protected Owner Image Optimization, Upload, Replacement & Deletion
+  // ---------------------------------------------------------------------------
+  const imageUploadMiddleware = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: MAX_UPLOAD_BYTES,
+      files: 2,
+    },
+  });
+
+  app.post(
+    '/api/owner/images/upload',
+    requireOwnerAuth,
+    imageUploadMiddleware.fields([
+      { name: 'image', maxCount: 1 },
+      { name: 'card', maxCount: 1 },
+    ]),
+    (req: AuthenticatedRequest, res) => {
+      void (async () => {
+        const admin = getSupabaseAdmin();
+        if (!admin) {
+          res.status(503).json({ error: 'Supabase Storage is not configured on the backend.' });
+          return;
+        }
+
+        const files = req.files as
+          | { image?: Express.Multer.File[]; card?: Express.Multer.File[] }
+          | undefined;
+        const primaryFile = files?.image?.[0];
+        const cardFile = files?.card?.[0];
+
+        if (!primaryFile || !primaryFile.buffer || primaryFile.buffer.length === 0) {
+          res.status(400).json({ error: 'Select an image file to upload.' });
+          return;
+        }
+
+        const body = (req.body ?? {}) as Record<string, unknown>;
+        const scope = sanitizeScopeSegment(body.scope);
+        const productId = isUuidString(body.productId) ? body.productId.trim() : undefined;
+        const entityId = productId || cleanOptionalText(body.entityId, 64) || 'shared';
+
+        let uploadOutcome;
+        try {
+          uploadOutcome = await uploadOptimizedMediaToSupabase({
+            admin,
+            sourceBuffer: primaryFile.buffer,
+            precompressedCardBuffer: cardFile?.buffer ?? null,
+            scope,
+            entityId,
+            version: 1,
+            allowDedup: true,
+          });
+        } catch (err) {
+          res.status(400).json({
+            error: err instanceof Error ? err.message : 'Unable to optimize and store image.',
+          });
+          return;
+        }
+
+        const { result, newlyUploadedPaths } = uploadOutcome;
+        let insertedRecord: Record<string, unknown> | null = null;
+
+        if (productId) {
+          const altText = cleanOptionalText(body.altText, 200) ?? '';
+          const isPrimary = String(body.isPrimary ?? '').toLowerCase() === 'true';
+          const parsedSortOrder = Number(body.sortOrder ?? 0);
+          const sortOrder =
+            Number.isInteger(parsedSortOrder) && parsedSortOrder >= 0 ? parsedSortOrder : 0;
+
+          if (isPrimary) {
+            await admin
+              .from('product_images')
+              .update({ is_primary: false })
+              .eq('product_id', productId);
+          }
+
+          const { data: dbRow, error: dbErr } = await admin
+            .from('product_images')
+            .insert({
+              product_id: productId,
+              storage_path: result.detailStoragePath,
+              card_storage_path: result.cardStoragePath,
+              detail_storage_path: result.detailStoragePath,
+              content_hash: result.contentHash,
+              image_version: result.imageVersion,
+              mime_type: result.mimeType,
+              width: result.width,
+              height: result.height,
+              size_bytes: result.detailSizeBytes,
+              card_size_bytes: result.cardSizeBytes,
+              detail_size_bytes: result.detailSizeBytes,
+              alt_text: altText,
+              sort_order: sortOrder,
+              is_primary: isPrimary,
+            })
+            .select('*')
+            .single();
+
+          if (dbErr) {
+            if (newlyUploadedPaths.length > 0) {
+              await deleteUnreferencedStorageObjects(admin, newlyUploadedPaths);
+            }
+            res.status(500).json({
+              error: 'Image uploaded but failed to save product image metadata; rolled back cleanly.',
+            });
+            return;
+          }
+
+          insertedRecord = dbRow as Record<string, unknown>;
+          broadcastToAllCustomers({ type: 'catalog:updated' });
+          broadcastToOwners({ type: 'catalog:updated' });
+        }
+
+        res.status(201).json({
+          ...result,
+          imageRecord: insertedRecord,
+        });
+      })();
     }
-    const catalog = getCatalogState();
-    broadcastToAllCustomers({ type: 'catalog:updated', ...catalog });
-    broadcastToOwners({ type: 'catalog:updated', ...catalog });
-    res.json({ ok: true, ...catalog });
+  );
+
+  app.put(
+    '/api/owner/images/:id/replace',
+    requireOwnerAuth,
+    imageUploadMiddleware.fields([
+      { name: 'image', maxCount: 1 },
+      { name: 'card', maxCount: 1 },
+    ]),
+    (req: AuthenticatedRequest, res) => {
+      void (async () => {
+        const admin = getSupabaseAdmin();
+        if (!admin) {
+          res.status(503).json({ error: 'Supabase Storage is not configured on the backend.' });
+          return;
+        }
+
+        if (!isUuidString(req.params.id)) {
+          res.status(400).json({ error: 'Invalid product image identifier.' });
+          return;
+        }
+
+        const { data: existingRow, error: fetchErr } = await admin
+          .from('product_images')
+          .select('*')
+          .eq('id', req.params.id)
+          .maybeSingle();
+
+        if (fetchErr) {
+          res.status(500).json({ error: 'Unable to look up existing product image.' });
+          return;
+        }
+        if (!existingRow) {
+          res.status(404).json({ error: 'Product image record not found.' });
+          return;
+        }
+
+        const files = req.files as
+          | { image?: Express.Multer.File[]; card?: Express.Multer.File[] }
+          | undefined;
+        const primaryFile = files?.image?.[0];
+        const cardFile = files?.card?.[0];
+
+        if (!primaryFile || !primaryFile.buffer || primaryFile.buffer.length === 0) {
+          res.status(400).json({ error: 'Select a replacement image file.' });
+          return;
+        }
+
+        const nextVersion =
+          (typeof existingRow.image_version === 'number' ? existingRow.image_version : 1) + 1;
+
+        let uploadOutcome;
+        try {
+          uploadOutcome = await uploadOptimizedMediaToSupabase({
+            admin,
+            sourceBuffer: primaryFile.buffer,
+            precompressedCardBuffer: cardFile?.buffer ?? null,
+            scope: 'products',
+            entityId: String(existingRow.product_id),
+            version: nextVersion,
+            excludeImageId: String(existingRow.id),
+            allowDedup: true,
+          });
+        } catch (err) {
+          res.status(400).json({
+            error: err instanceof Error ? err.message : 'Unable to optimize replacement image.',
+          });
+          return;
+        }
+
+        const { result, newlyUploadedPaths } = uploadOutcome;
+        const body = (req.body ?? {}) as Record<string, unknown>;
+        const nextAltText =
+          body.altText !== undefined
+            ? (cleanOptionalText(body.altText, 200) ?? '')
+            : String(existingRow.alt_text ?? '');
+
+        const { data: updatedRow, error: updateErr } = await admin
+          .from('product_images')
+          .update({
+            storage_path: result.detailStoragePath,
+            card_storage_path: result.cardStoragePath,
+            detail_storage_path: result.detailStoragePath,
+            content_hash: result.contentHash,
+            image_version: nextVersion,
+            mime_type: result.mimeType,
+            width: result.width,
+            height: result.height,
+            size_bytes: result.detailSizeBytes,
+            card_size_bytes: result.cardSizeBytes,
+            detail_size_bytes: result.detailSizeBytes,
+            alt_text: nextAltText,
+          })
+          .eq('id', existingRow.id)
+          .select('*')
+          .single();
+
+        if (updateErr) {
+          if (newlyUploadedPaths.length > 0) {
+            await deleteUnreferencedStorageObjects(admin, newlyUploadedPaths);
+          }
+          res.status(500).json({ error: 'Failed to update image record; kept previous image.' });
+          return;
+        }
+
+        // Remove old storage objects ONLY after replacement succeeded AND only if unreferenced
+        await deleteUnreferencedStorageObjects(admin, [
+          existingRow.storage_path as string | null,
+          existingRow.card_storage_path as string | null,
+          existingRow.detail_storage_path as string | null,
+        ]);
+
+        broadcastToAllCustomers({ type: 'catalog:updated' });
+        broadcastToOwners({ type: 'catalog:updated' });
+
+        res.json({
+          ...result,
+          imageVersion: nextVersion,
+          imageRecord: updatedRow,
+        });
+      })();
+    }
+  );
+
+  app.delete('/api/owner/images/:id', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void (async () => {
+      const admin = getSupabaseAdmin();
+      if (!admin) {
+        res.status(503).json({ error: 'Supabase Storage is not configured on the backend.' });
+        return;
+      }
+
+      if (!isUuidString(req.params.id)) {
+        res.status(400).json({ error: 'Invalid product image identifier.' });
+        return;
+      }
+
+      const { data: deletedRow, error } = await admin
+        .from('product_images')
+        .delete()
+        .eq('id', req.params.id)
+        .select('id, storage_path, card_storage_path, detail_storage_path')
+        .maybeSingle();
+
+      if (error) {
+        res.status(500).json({ error: 'Failed to delete product image record.' });
+        return;
+      }
+      if (!deletedRow) {
+        res.status(404).json({ error: 'Product image record not found.' });
+        return;
+      }
+
+      const cleanup = await deleteUnreferencedStorageObjects(admin, [
+        deletedRow.storage_path as string | null,
+        deletedRow.card_storage_path as string | null,
+        deletedRow.detail_storage_path as string | null,
+      ]);
+
+      broadcastToAllCustomers({ type: 'catalog:updated' });
+      broadcastToOwners({ type: 'catalog:updated' });
+      res.json({ ok: true, id: deletedRow.id, cleanup });
+    })();
+  });
+
+  app.delete('/api/owner/products/:id', requireOwnerAuth, (req: AuthenticatedRequest, res) => {
+    void (async () => {
+      const admin = getSupabaseAdmin();
+      if (admin && isUuidString(req.params.id)) {
+        const { data: productImages } = await admin
+          .from('product_images')
+          .select('storage_path, card_storage_path, detail_storage_path')
+          .eq('product_id', req.params.id);
+
+        const { data: deletedRow, error } = await admin
+          .from('products')
+          .delete()
+          .eq('id', req.params.id)
+          .select('id')
+          .maybeSingle();
+
+        if (error) {
+          res.status(500).json({ error: 'Failed to delete product.' });
+          return;
+        }
+        if (!deletedRow) {
+          res.status(404).json({ error: 'Product not found.' });
+          return;
+        }
+
+        const candidatePaths = (productImages ?? []).flatMap((img: Record<string, unknown>) => [
+          img.storage_path as string | null,
+          img.card_storage_path as string | null,
+          img.detail_storage_path as string | null,
+        ]);
+        await deleteUnreferencedStorageObjects(admin, candidatePaths);
+
+        broadcastToAllCustomers({ type: 'catalog:updated' });
+        broadcastToOwners({ type: 'catalog:updated' });
+        res.json({ ok: true, id: deletedRow.id });
+        return;
+      }
+
+      const deleted = deleteProductRecord(req.params.id);
+      if (!deleted) {
+        res.status(404).json({ error: 'Product not found.' });
+        return;
+      }
+      const catalog = getCatalogState();
+      broadcastToAllCustomers({ type: 'catalog:updated', ...catalog });
+      broadcastToOwners({ type: 'catalog:updated', ...catalog });
+      res.json({ ok: true, ...catalog });
+    })();
   });
 
   app.patch(
@@ -1949,6 +2322,12 @@ async function startServer(): Promise<void> {
 
     const admin = getSupabaseAdmin();
     if (admin) {
+      const { data: existingCollection } = await admin
+        .from('collections')
+        .select('image_path, image_version')
+        .eq('id', req.params.id)
+        .maybeSingle();
+
       const patch: Record<string, unknown> = {};
       const nextTitle = cleanOptionalText(body.title, 100);
       if (body.title !== undefined && !nextTitle) {
@@ -1965,7 +2344,16 @@ async function startServer(): Promise<void> {
         }
         patch.summary = nextSummary;
       }
-      if (typeof rawImage === 'string') patch.image_path = rawImage.trim();
+      if (typeof rawImage === 'string') {
+        const nextImagePath = rawImage.trim();
+        patch.image_path = nextImagePath;
+        if (existingCollection && existingCollection.image_path !== nextImagePath) {
+          patch.image_version =
+            (typeof existingCollection.image_version === 'number'
+              ? existingCollection.image_version
+              : 1) + 1;
+        }
+      }
       if (parsedCategory) patch.filter_category = parsedCategory;
       if (typeof rawActive === 'boolean') patch.is_active = rawActive;
       if (parsedSortOrder !== undefined) patch.sort_order = parsedSortOrder;
@@ -1985,6 +2373,15 @@ async function startServer(): Promise<void> {
         res.status(404).json({ error: 'Collection not found.' });
         return;
       }
+
+      if (
+        typeof rawImage === 'string' &&
+        existingCollection?.image_path &&
+        existingCollection.image_path !== rawImage.trim()
+      ) {
+        await deleteUnreferencedStorageObjects(admin, [existingCollection.image_path]);
+      }
+
       const updated = mapDbCollectionRow(data as DbCollectionRow);
       broadcastToAllCustomers({ type: 'catalog:updated' });
       broadcastToOwners({ type: 'catalog:updated' });
@@ -2021,7 +2418,7 @@ async function startServer(): Promise<void> {
         .from('collections')
         .delete()
         .eq('id', req.params.id)
-        .select('id')
+        .select('id, image_path')
         .maybeSingle();
       if (error) {
         res.status(500).json({ error: 'Failed to delete collection.' });
@@ -2031,6 +2428,7 @@ async function startServer(): Promise<void> {
         res.status(404).json({ error: 'Collection not found.' });
         return;
       }
+      await deleteUnreferencedStorageObjects(admin, [data.image_path as string | null]);
       broadcastToAllCustomers({ type: 'catalog:updated' });
       broadcastToOwners({ type: 'catalog:updated' });
       res.json({ ok: true, id: data.id });
@@ -2340,7 +2738,14 @@ async function startServer(): Promise<void> {
       }
       const nextCta = cleanOptionalText(body.ctaLabel ?? body.cta_label, 60);
       if (nextCta) patch.cta_label = nextCta;
-      if (typeof rawImage === 'string') patch.image_path = rawImage.trim();
+      if (typeof rawImage === 'string') {
+        const nextImagePath = rawImage.trim();
+        patch.image_path = nextImagePath;
+        if (existing.image_path !== nextImagePath) {
+          patch.image_version =
+            (typeof existing.image_version === 'number' ? existing.image_version : 1) + 1;
+        }
+      }
       if (parsedCategory) patch.target_category = parsedCategory;
       if (parsedSortOrder !== undefined) patch.sort_order = parsedSortOrder;
 
@@ -2354,6 +2759,14 @@ async function startServer(): Promise<void> {
       if (updateErr) {
         res.status(500).json({ error: 'Failed to update campaign.' });
         return;
+      }
+
+      if (
+        typeof rawImage === 'string' &&
+        existing.image_path &&
+        existing.image_path !== rawImage.trim()
+      ) {
+        await deleteUnreferencedStorageObjects(admin, [existing.image_path]);
       }
 
       const updated = mapDbCampaignRow(updatedRow as DbCampaignRow);
@@ -2411,7 +2824,7 @@ async function startServer(): Promise<void> {
         .from('campaigns')
         .delete()
         .eq('id', req.params.id)
-        .select('id')
+        .select('id, image_path')
         .maybeSingle();
       if (error) {
         res.status(500).json({ error: 'Failed to delete campaign.' });
@@ -2421,6 +2834,7 @@ async function startServer(): Promise<void> {
         res.status(404).json({ error: 'Campaign not found.' });
         return;
       }
+      await deleteUnreferencedStorageObjects(admin, [data.image_path as string | null]);
       broadcastToAllCustomers({ type: 'catalog:updated' });
       broadcastToOwners({ type: 'catalog:updated' });
       res.json({ ok: true, id: data.id });
@@ -2814,6 +3228,14 @@ async function startServer(): Promise<void> {
 
   // Non-leaking production error handler
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    if (err instanceof multer.MulterError) {
+      const msg =
+        err.code === 'LIMIT_FILE_SIZE'
+          ? 'Image exceeds the 12 MB upload size limit.'
+          : 'Invalid image upload request.';
+      res.status(400).json({ error: msg });
+      return;
+    }
     if (err instanceof SyntaxError && 'body' in err) {
       res.status(400).json({ error: 'Invalid JSON request body.' });
       return;

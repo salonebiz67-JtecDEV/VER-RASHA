@@ -55,6 +55,7 @@ export const HomeView: React.FC = () => {
               src={heroImageUrl}
               alt="VEY RASHA Autumn-Winter campaign silhouette in flowing champagne evening gown"
               loading="eager"
+              fetchPriority="high"
               className="h-full w-full"
               imgClassName="object-[center_22%]"
             />
@@ -159,8 +160,9 @@ export const HomeView: React.FC = () => {
                       >
                         <div className="aspect-[4/5] w-10 shrink-0 overflow-hidden rounded-lg bg-[#EFE7DA]">
                           <LuxuryImage
-                            src={item.images[0] ?? ''}
+                            src={item.cardImages?.[0] ?? item.images[0] ?? ''}
                             alt={item.name}
+                            loading="lazy"
                             className="h-full w-full"
                           />
                         </div>

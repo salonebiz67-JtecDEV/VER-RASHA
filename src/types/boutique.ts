@@ -37,6 +37,7 @@ export interface Product {
   collectionId: string;
   priceUsd: number;
   images: string[];
+  cardImages?: string[];
   description: string;
   material: string;
   care: string;

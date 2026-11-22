@@ -56,8 +56,9 @@ export const WishlistView: React.FC = () => {
                 className="aspect-[4/5] w-full overflow-hidden bg-[#EFE7DA] text-left"
               >
                 <LuxuryImage
-                  src={product.images[0] ?? ''}
+                  src={product.cardImages?.[0] ?? product.images[0] ?? ''}
                   alt={product.name}
+                  loading="lazy"
                   className="h-full w-full transition-transform duration-300 hover:scale-[1.03]"
                 />
               </button>
