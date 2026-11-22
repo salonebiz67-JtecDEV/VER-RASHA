@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   User,
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 import { useBoutique } from '../../context/BoutiqueContext';
 import type { OrderRecord } from '../../types/boutique';
 import { formatPrice } from '../../utils/formatCurrency';
@@ -17,6 +18,7 @@ import { PrintableReceiptModal } from '../orders/PrintableReceiptModal';
 import { LuxuryImage } from '../ui/LuxuryImage';
 
 export const CheckoutView: React.FC = () => {
+  const { isAuthenticated, isConfigured, isSigningIn, loginWithGoogle } = useAuth();
   const {
     products,
     cart,
@@ -141,7 +143,7 @@ export const CheckoutView: React.FC = () => {
       }
 
       if (saveAddressForSession) {
-        addAddress({
+        await addAddress({
           label: `${city.trim()} — ${area.trim()}`,
           recipientName: fullName.trim(),
           phone: phone.trim(),
@@ -296,6 +298,45 @@ export const CheckoutView: React.FC = () => {
         >
           Shop Collection
         </button>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="mx-auto max-w-xl px-4 pt-10 pb-24">
+        <button
+          type="button"
+          onClick={() => navigate('cart')}
+          className="mb-4 inline-flex min-h-[44px] items-center gap-2 text-xs font-medium tracking-wider text-[#665B51] uppercase hover:text-[#302923]"
+        >
+          <ArrowLeft className="h-4 w-4" strokeWidth={1.6} />
+          <span>Return to Shopping Bag</span>
+        </button>
+
+        <div className="rounded-2xl border border-[#D8C3A5] bg-[#FCF9F4] p-7 text-center sm:p-10">
+          <p className="text-[11px] font-medium tracking-[0.18em] text-[#8C6D46] uppercase">
+            Boutique Checkout
+          </p>
+          <h1 className="mt-2 font-serif text-3xl font-medium text-[#302923]">
+            Sign In to Submit Your Order
+          </h1>
+          <p className="mt-3 text-sm leading-relaxed text-[#665B51]">
+            Please sign in with Google so VEY RASHA can securely link your order request, save your
+            manual delivery address, and send real-time delivery fee confirmations.
+          </p>
+          <button
+            type="button"
+            disabled={!isConfigured || isSigningIn}
+            onClick={() => void loginWithGoogle()}
+            className="mt-6 inline-flex min-h-[48px] items-center justify-center rounded-full bg-[#302923] px-8 py-3 text-xs font-semibold tracking-[0.14em] text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35] disabled:opacity-50"
+          >
+            {isSigningIn ? 'Redirecting to Google...' : 'Continue with Google'}
+          </button>
+          {!isConfigured && backendErrorMessage && (
+            <p className="mt-4 text-xs text-[#665B51]">{backendErrorMessage}</p>
+          )}
+        </div>
       </div>
     );
   }

@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from 'react';
 import { ArrowRight, Search, X } from 'lucide-react';
-import { ASSETS, CATEGORIES } from '../../data/catalog';
 import { useBoutique } from '../../context/BoutiqueContext';
 import { formatPrice } from '../../utils/formatCurrency';
 import { LuxuryImage } from '../ui/LuxuryImage';
@@ -11,6 +10,8 @@ export const HomeView: React.FC = () => {
     navigate,
     setSearchQuery,
     products,
+    categories,
+    heroImageUrl,
     collections,
     campaigns,
     currency,
@@ -19,7 +20,7 @@ export const HomeView: React.FC = () => {
 
   const newArrivals = products.filter((p) => p.isNewArrival).slice(0, 4);
   const bestSellers = products.filter((p) => p.isBestSeller).slice(0, 4);
-  const visualCategories = CATEGORIES.filter((cat) => cat.slug !== 'all' && cat.image);
+  const visualCategories = categories.filter((cat) => cat.slug !== 'all' && cat.image);
   const campaign = campaigns[0];
   const featuredProduct = products[0];
 
@@ -48,7 +49,7 @@ export const HomeView: React.FC = () => {
         <div className="relative overflow-hidden rounded-2xl border border-[#E4D8C5] bg-[#302923] sm:rounded-3xl">
           <div className="aspect-[3/4] w-full sm:aspect-[16/9] lg:aspect-[16/7.5]">
             <LuxuryImage
-              src={ASSETS.heroGown}
+              src={heroImageUrl}
               alt="VEY RASHA Autumn-Winter campaign silhouette in flowing champagne evening gown"
               loading="eager"
               className="h-full w-full"

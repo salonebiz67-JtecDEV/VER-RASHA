@@ -8,7 +8,7 @@ export type AppRoute =
   | 'account'
   | 'notifications';
 
-export type WelcomeAuthMode = 'landing' | 'signin' | 'signup' | 'forgot';
+export type WelcomeAuthMode = 'landing';
 
 export type CurrencyCode = 'USD' | 'EUR' | 'GBP' | 'CAD' | 'AED' | 'NGN';
 

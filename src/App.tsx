@@ -16,6 +16,7 @@ import { NotificationsView } from './components/views/NotificationsView';
 import { ProductDetailView } from './components/views/ProductDetailView';
 import { WelcomeAuthView } from './components/views/WelcomeAuthView';
 import { WishlistView } from './components/views/WishlistView';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { BoutiqueProvider, useBoutique } from './context/BoutiqueContext';
 import type { AppRoute } from './types/boutique';
 
@@ -95,6 +96,7 @@ const PageScrollContainer: React.FC<PageScrollContainerProps> = ({
 };
 
 const BoutiqueShell: React.FC = () => {
+  const { isConfigured, configWarning } = useAuth();
   const {
     route,
     selectedProductId,
@@ -122,6 +124,15 @@ const BoutiqueShell: React.FC = () => {
 
   return (
     <div className="vey-app-shell flex h-screen h-[100dvh] flex-col overflow-hidden bg-[#F6F1E8] text-[#302923]">
+      {!isConfigured && configWarning && (
+        <div
+          role="status"
+          className="border-b border-[#D8C3A5] bg-[#EFE7DA] px-4 py-2 text-center text-[11px] leading-snug text-[#302923]"
+        >
+          {configWarning}
+        </div>
+      )}
+
       <Header />
 
       <main className="relative min-h-0 flex-1 overflow-hidden">
@@ -212,8 +223,10 @@ const BoutiqueShell: React.FC = () => {
 
 export default function App() {
   return (
-    <BoutiqueProvider>
-      <BoutiqueShell />
-    </BoutiqueProvider>
+    <AuthProvider>
+      <BoutiqueProvider>
+        <BoutiqueShell />
+      </BoutiqueProvider>
+    </AuthProvider>
   );
 }

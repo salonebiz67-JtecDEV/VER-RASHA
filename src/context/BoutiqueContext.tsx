@@ -7,17 +7,40 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import {
-  EDITORIAL_CAMPAIGNS,
-  FEATURED_COLLECTIONS,
-  INITIAL_ADDRESSES,
-  INITIAL_CUSTOMER,
-  INITIAL_NOTIFICATIONS,
-  INITIAL_ORDERS,
-  PRODUCTS,
-} from '../data/catalog';
+import { APP_BASE_PATH } from '../config/api';
+import { ASSETS, CATEGORIES } from '../data/catalog';
 import { DEFAULT_STORE_SETTINGS } from '../data/storeConfig';
-import { apiUrl, APP_BASE_PATH, wsUrl } from '../config/api';
+import { isSupabaseConfigured, SUPABASE_CONFIG_WARNING } from '../lib/supabase';
+import {
+  createUserAddress,
+  deleteUserAddress,
+  fetchUserAddresses,
+  setDefaultUserAddress,
+  updateUserAddress,
+} from '../services/addresses.service';
+import {
+  clearUserCart,
+  fetchCartState,
+  removeCartItem,
+  setCartGiftPresentation,
+  updateCartItemQuantity,
+  upsertCartItem,
+} from '../services/cart.service';
+import {
+  fetchCustomerNotifications,
+  markAllCustomerNotificationsAsRead,
+  markCustomerNotificationAsRead,
+  subscribeCustomerRealtime,
+} from '../services/notifications.service';
+import { fetchCustomerOrders, submitBoutiqueOrder } from '../services/orders.service';
+import {
+  type BoutiqueCategoryItem,
+  fetchBoutiqueCatalog,
+} from '../services/products.service';
+import {
+  fetchWishlistProductIds,
+  toggleWishlistProduct,
+} from '../services/wishlist.service';
 import type {
   AppRoute,
   CartItem,
@@ -36,6 +59,7 @@ import type {
   StoreSettings,
   WelcomeAuthMode,
 } from '../types/boutique';
+import { useAuth } from './AuthContext';
 
 export type SortOption = 'featured' | 'price-asc' | 'price-desc' | 'newest';
 export type PriceBand = 'all' | 'under-450' | '450-900' | 'over-900';
@@ -63,6 +87,8 @@ interface BoutiqueContextValue {
   setSortBy: (sort: SortOption) => void;
   resetExploreFilters: () => void;
   products: Product[];
+  categories: BoutiqueCategoryItem[];
+  heroImageUrl: string;
   collections: Collection[];
   campaigns: EditorialCampaign[];
   storeSettings: StoreSettings;
@@ -84,17 +110,13 @@ interface BoutiqueContextValue {
   customer: CustomerProfile;
   updateCustomer: (patch: Partial<CustomerProfile>) => void;
   addresses: SavedAddress[];
-  addAddress: (address: Omit<SavedAddress, 'id'>) => SavedAddress;
-  updateAddress: (id: string, patch: Omit<SavedAddress, 'id'>) => void;
-  removeAddress: (id: string) => void;
-  setDefaultAddress: (id: string) => void;
+  addAddress: (address: Omit<SavedAddress, 'id'>) => Promise<SavedAddress | null>;
+  updateAddress: (id: string, patch: Omit<SavedAddress, 'id'>) => Promise<void>;
+  removeAddress: (id: string) => Promise<void>;
+  setDefaultAddress: (id: string) => Promise<void>;
   orders: OrderRecord[];
   isLoadingOrders: boolean;
   refreshOrders: () => Promise<void>;
-  retrieveGuestOrder: (
-    orderReference: string,
-    phone: string
-  ) => Promise<{ ok: boolean; order?: OrderRecord; error?: string }>;
   notifications: NotificationItem[];
   unreadNotificationCount: number;
   isLoadingNotifications: boolean;
@@ -166,20 +188,19 @@ function parseRouteFromLocation(): {
   productId: string;
   isDeepLink: boolean;
 } {
-  const defaultProductId = PRODUCTS[0]?.id ?? '';
   if (typeof window === 'undefined') {
-    return { route: 'home', productId: defaultProductId, isDeepLink: false };
+    return { route: 'home', productId: '', isDeepLink: false };
   }
   const relative = stripBaseFromPathname(window.location.pathname).toLowerCase();
   if (!relative || relative === 'home') {
-    return { route: 'home', productId: defaultProductId, isDeepLink: false };
+    return { route: 'home', productId: '', isDeepLink: false };
   }
   const segments = relative.split('/').filter(Boolean);
   if (segments[0] === 'shop') {
-    return { route: 'explore', productId: defaultProductId, isDeepLink: true };
+    return { route: 'explore', productId: '', isDeepLink: true };
   }
   if (segments[0] === 'bag') {
-    return { route: 'cart', productId: defaultProductId, isDeepLink: true };
+    return { route: 'cart', productId: '', isDeepLink: true };
   }
   if (segments[0] === 'product' && segments[1]) {
     return {
@@ -190,9 +211,9 @@ function parseRouteFromLocation(): {
   }
   const candidate = segments[0] as AppRoute;
   if (PUBLIC_ROUTES.has(candidate)) {
-    return { route: candidate, productId: defaultProductId, isDeepLink: true };
+    return { route: candidate, productId: '', isDeepLink: true };
   }
-  return { route: 'home', productId: defaultProductId, isDeepLink: false };
+  return { route: 'home', productId: '', isDeepLink: false };
 }
 
 function buildUrlForRoute(route: AppRoute, productId?: string): string {
@@ -212,13 +233,29 @@ function buildUrlForRoute(route: AppRoute, productId?: string): string {
 }
 
 export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const {
+    user,
+    profile,
+    authLoading,
+    isAuthenticated,
+    isDevGuestSession,
+    enterDevGuestMode,
+    saveProfile,
+  } = useAuth();
+
   const initialLocation = useMemo(() => parseRouteFromLocation(), []);
-  const [products, setProducts] = useState<Product[]>(PRODUCTS);
-  const [collections, setCollections] = useState<Collection[]>(FEATURED_COLLECTIONS);
-  const [campaigns, setCampaigns] = useState<EditorialCampaign[]>(EDITORIAL_CAMPAIGNS);
+
+  // Live catalog from Supabase (zero invented/starter products)
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<BoutiqueCategoryItem[]>(CATEGORIES);
+  const [heroImageUrl, setHeroImageUrl] = useState<string>(ASSETS.heroGown);
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [campaigns, setCampaigns] = useState<EditorialCampaign[]>([]);
   const [storeSettings, setStoreSettings] = useState<StoreSettings>(DEFAULT_STORE_SETTINGS);
 
-  const [showWelcomeAuth, setShowWelcomeAuth] = useState<boolean>(() => !initialLocation.isDeepLink);
+  const [showWelcomeAuth, setShowWelcomeAuth] = useState<boolean>(
+    () => !initialLocation.isDeepLink
+  );
   const [welcomeAuthMode, setWelcomeAuthMode] = useState<WelcomeAuthMode>('landing');
 
   const [route, setRoute] = useState<AppRoute>(initialLocation.route);
@@ -231,38 +268,43 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [giftWrap, setGiftWrap] = useState(false);
+  const [giftWrap, setGiftWrapState] = useState(false);
 
-  const [customer, setCustomer] = useState<CustomerProfile>(INITIAL_CUSTOMER);
-  const [addresses, setAddresses] = useState<SavedAddress[]>(INITIAL_ADDRESSES);
-
-  // In-memory customer Bearer token (never written to localStorage/sessionStorage)
-  const [customerToken, setCustomerToken] = useState<string | null>(null);
-  const customerTokenRef = useRef<string | null>(null);
-  customerTokenRef.current = customerToken;
-
-  const [orders, setOrders] = useState<OrderRecord[]>(INITIAL_ORDERS);
+  const [addresses, setAddresses] = useState<SavedAddress[]>([]);
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
-  const [notifications, setNotifications] = useState<NotificationItem[]>(INITIAL_NOTIFICATIONS);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
   const [browserNotificationPermission, setBrowserNotificationPermission] =
     useState<BrowserNotificationPermission>(() => readBrowserNotificationPermission());
 
-  const [backendStatus, setBackendStatus] = useState<BackendStatus>('checking');
-  const [backendErrorMessage, setBackendErrorMessage] = useState<string | null>(null);
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>(
+    isSupabaseConfigured ? 'checking' : 'unavailable'
+  );
+  const [backendErrorMessage, setBackendErrorMessage] = useState<string | null>(
+    isSupabaseConfigured ? null : SUPABASE_CONFIG_WARNING
+  );
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [isCatalogLoading, setIsCatalogLoading] = useState(false);
+  const [isCatalogLoading, setIsCatalogLoading] = useState<boolean>(isSupabaseConfigured);
   const [catalogError, setCatalogError] = useState<string | null>(null);
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message);
   }, []);
 
+  // Automatically dismiss Welcome screen once authenticated via Google OAuth
+  useEffect(() => {
+    if (!authLoading && isAuthenticated) {
+      setShowWelcomeAuth(false);
+    }
+  }, [authLoading, isAuthenticated]);
+
   const enterAsGuest = useCallback(() => {
+    enterDevGuestMode();
     setShowWelcomeAuth(false);
     setWelcomeAuthMode('landing');
-  }, []);
+  }, [enterDevGuestMode]);
 
   const openWelcomeAuth = useCallback((mode: WelcomeAuthMode = 'landing') => {
     setWelcomeAuthMode(mode);
@@ -273,293 +315,171 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setShowWelcomeAuth(false);
   }, []);
 
-  const applyCatalogSnapshot = useCallback(
-    (data: {
-      products?: Product[];
-      collections?: Collection[];
-      campaigns?: EditorialCampaign[];
-      storeSettings?: StoreSettings;
-    }) => {
-      if (Array.isArray(data.products)) setProducts(data.products);
-      if (Array.isArray(data.collections)) setCollections(data.collections);
-      if (Array.isArray(data.campaigns)) setCampaigns(data.campaigns);
-      if (data.storeSettings) setStoreSettings(data.storeSettings);
-    },
-    []
-  );
-
-  const loadCatalogFromBackend = useCallback(async (): Promise<boolean> => {
-    try {
-      const res = await fetch(apiUrl('/api/catalog'));
-      if (!res.ok) {
-        return false;
-      }
-      const data = (await res.json()) as {
-        products?: Product[];
-        collections?: Collection[];
-        campaigns?: EditorialCampaign[];
-        storeSettings?: StoreSettings;
-      };
-      applyCatalogSnapshot(data);
-      setBackendStatus('connected');
-      setBackendErrorMessage(null);
+  const loadCatalogFromSupabase = useCallback(async (): Promise<boolean> => {
+    if (!isSupabaseConfigured) {
+      setProducts([]);
+      setCollections([]);
+      setCampaigns([]);
+      setBackendStatus('unavailable');
+      setBackendErrorMessage(SUPABASE_CONFIG_WARNING);
+      setIsCatalogLoading(false);
       setCatalogError(null);
-      return true;
-    } catch {
       return false;
     }
-  }, [applyCatalogSnapshot]);
+
+    setIsCatalogLoading(true);
+    setCatalogError(null);
+    try {
+      const snapshot = await fetchBoutiqueCatalog();
+      setProducts(snapshot.products);
+      if (snapshot.categories.length > 1) {
+        setCategories(snapshot.categories);
+      } else {
+        setCategories(CATEGORIES);
+      }
+      setHeroImageUrl(snapshot.heroImageUrl || ASSETS.heroGown);
+      setCollections(snapshot.collections);
+      setCampaigns(snapshot.campaigns);
+      setStoreSettings(snapshot.storeSettings);
+      setBackendStatus('connected');
+      setBackendErrorMessage(null);
+      return true;
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : 'Unable to load the boutique catalogue from Supabase.';
+      setCatalogError(msg);
+      setBackendStatus('unavailable');
+      setBackendErrorMessage(msg);
+      return false;
+    } finally {
+      setIsCatalogLoading(false);
+    }
+  }, []);
 
   const checkBackendHealth = useCallback(async (): Promise<boolean> => {
     setBackendStatus('checking');
-    try {
-      const res = await fetch(apiUrl('/health'), { cache: 'no-store' });
-      if (!res.ok) {
-        setBackendStatus('unavailable');
-        setBackendErrorMessage(
-          'The boutique order and notification server is currently unavailable. Please retry shortly.'
-        );
-        return false;
-      }
-      const data = (await res.json()) as { status?: string };
-      if (data.status !== 'ok') {
-        setBackendStatus('unavailable');
-        setBackendErrorMessage(
-          'The boutique server returned an unexpected response. Please retry shortly.'
-        );
-        return false;
-      }
-      setBackendStatus('connected');
-      setBackendErrorMessage(null);
-      void loadCatalogFromBackend();
-      return true;
-    } catch {
-      setBackendStatus('unavailable');
-      setBackendErrorMessage(
-        'Unable to reach the boutique server. You can continue browsing pieces while reconnecting.'
-      );
-      return false;
-    }
-  }, [loadCatalogFromBackend]);
+    return loadCatalogFromSupabase();
+  }, [loadCatalogFromSupabase]);
 
-  // Verify backend health and load live catalog snapshot on boot
+  // Initial catalog fetch from Supabase
   useEffect(() => {
-    let active = true;
-    const initBoot = async () => {
-      try {
-        const res = await fetch(apiUrl('/health'), { cache: 'no-store' });
-        if (!active) return;
-        if (res.ok) {
-          setBackendStatus('connected');
-          setBackendErrorMessage(null);
-          await loadCatalogFromBackend();
-        } else {
-          setBackendStatus('unavailable');
-          setBackendErrorMessage(
-            'The boutique order and notification server is currently unavailable.'
-          );
-        }
-      } catch {
-        if (active) {
-          setBackendStatus('unavailable');
-          setBackendErrorMessage(
-            'Unable to reach the boutique server. You can browse pieces while reconnecting.'
-          );
-        }
-      }
-    };
-    void initBoot();
-    return () => {
-      active = false;
-    };
-  }, [loadCatalogFromBackend]);
-
-  // Initialize customer session token in memory
-  useEffect(() => {
-    let active = true;
-    const initCustomerSession = async () => {
-      try {
-        const res = await fetch(apiUrl('/api/customer/session'), { method: 'POST' });
-        if (!res.ok) return;
-        const data = (await res.json()) as { customerToken?: string };
-        if (active && data.customerToken) {
-          setCustomerToken(data.customerToken);
-          setBackendStatus('connected');
-          setBackendErrorMessage(null);
-        }
-      } catch {
-        // Handled when making order or sync calls
-      }
-    };
-    void initCustomerSession();
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const ensureCustomerToken = useCallback(async (): Promise<string | null> => {
-    if (customerTokenRef.current) return customerTokenRef.current;
-    try {
-      const res = await fetch(apiUrl('/api/customer/session'), { method: 'POST' });
-      if (!res.ok) {
-        setBackendStatus('unavailable');
-        setBackendErrorMessage('Unable to reach the boutique backend service.');
-        return null;
-      }
-      const data = (await res.json()) as { customerToken?: string };
-      if (data.customerToken) {
-        setCustomerToken(data.customerToken);
-        customerTokenRef.current = data.customerToken;
-        setBackendStatus('connected');
-        setBackendErrorMessage(null);
-        return data.customerToken;
-      }
-      return null;
-    } catch {
-      setBackendStatus('unavailable');
-      setBackendErrorMessage('Unable to reach the boutique backend service.');
-      return null;
-    }
-  }, []);
+    void loadCatalogFromSupabase();
+  }, [loadCatalogFromSupabase]);
 
   const refreshOrders = useCallback(async () => {
-    const token = await ensureCustomerToken();
-    if (!token) return;
+    if (!user) {
+      setOrders([]);
+      return;
+    }
     setIsLoadingOrders(true);
     try {
-      const res = await fetch(apiUrl('/api/orders'), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        if (res.status >= 500) {
-          setBackendStatus('unavailable');
-          setBackendErrorMessage('Order service returned a server error.');
-        }
-        return;
-      }
-      const data = (await res.json()) as { orders?: OrderRecord[] };
-      if (Array.isArray(data.orders)) {
-        setOrders(data.orders);
-      }
-      setBackendStatus('connected');
-      setBackendErrorMessage(null);
-    } catch {
-      setBackendStatus('unavailable');
-      setBackendErrorMessage('Unable to reach the order service.');
+      const list = await fetchCustomerOrders(user.id);
+      setOrders(list);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to load orders.');
     } finally {
       setIsLoadingOrders(false);
     }
-  }, [ensureCustomerToken]);
+  }, [showToast, user]);
 
   const refreshNotifications = useCallback(async () => {
-    const token = await ensureCustomerToken();
-    if (!token) {
-      setNotificationsError('Unable to reach notification service. Please check your connection.');
+    if (!user) {
+      setNotifications([]);
+      setNotificationsError(null);
       return;
     }
     setNotificationsError(null);
     setIsLoadingNotifications(true);
     try {
-      const res = await fetch(apiUrl('/api/notifications'), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        setNotificationsError('Unable to load notifications right now.');
-        if (res.status >= 500) {
-          setBackendStatus('unavailable');
-        }
-        return;
-      }
-      const data = (await res.json()) as { notifications?: NotificationItem[] };
-      if (Array.isArray(data.notifications)) {
-        setNotifications(data.notifications);
-      }
-      setBackendStatus('connected');
-      setBackendErrorMessage(null);
-    } catch {
-      setNotificationsError('Unable to reach notification service.');
-      setBackendStatus('unavailable');
-      setBackendErrorMessage('Unable to reach the boutique notification service.');
+      const list = await fetchCustomerNotifications(user.id);
+      setNotifications(list);
+    } catch (err) {
+      setNotificationsError(
+        err instanceof Error ? err.message : 'Unable to load notifications right now.'
+      );
     } finally {
       setIsLoadingNotifications(false);
     }
-  }, [ensureCustomerToken]);
+  }, [user]);
 
+  // Hydrate authenticated customer data (wishlist, bag, addresses, orders, notifications)
+  const hydratedUserIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!customerToken) return;
-    void refreshOrders();
-    void refreshNotifications();
-  }, [customerToken, refreshOrders, refreshNotifications]);
+    if (!user) {
+      hydratedUserIdRef.current = null;
+      if (!isDevGuestSession) {
+        setWishlistIds([]);
+        setCart([]);
+        setGiftWrapState(false);
+        setAddresses([]);
+        setOrders([]);
+        setNotifications([]);
+      }
+      return;
+    }
 
-  // Customer WebSocket connection (order updates, catalog updates & announcements)
-  useEffect(() => {
-    if (!customerToken) return;
-    let closedByCleanup = false;
-    let socket: WebSocket | null = null;
-    let reconnectTimer: number | null = null;
+    let active = true;
+    hydratedUserIdRef.current = user.id;
 
-    const connect = () => {
-      if (closedByCleanup) return;
-      socket = new WebSocket(wsUrl('/ws'));
-
-      socket.addEventListener('open', () => {
-        socket?.send(JSON.stringify({ type: 'auth', role: 'customer', token: customerToken }));
-      });
-
-      socket.addEventListener('message', (event) => {
-        try {
-          const payload = JSON.parse(String(event.data)) as {
-            type?: string;
-            order?: OrderRecord;
-            notification?: NotificationItem;
-            products?: Product[];
-            collections?: Collection[];
-            campaigns?: EditorialCampaign[];
-            storeSettings?: StoreSettings;
-          };
-          if (payload.type === 'order:updated' && payload.order) {
-            setOrders((prev) => upsertOrder(prev, payload.order!));
-            if (payload.notification) {
-              setNotifications((prev) => upsertNotification(prev, payload.notification!));
-              showToast(payload.notification.title);
-              if (
-                typeof Notification !== 'undefined' &&
-                Notification.permission === 'granted'
-              ) {
-                try {
-                  new Notification(`VEY RASHA · ${payload.notification.title}`, {
-                    body: payload.notification.message,
-                  });
-                } catch {
-                  // Ignore environments restricting Notification constructor
-                }
-              }
-            }
-          } else if (payload.type === 'catalog:updated') {
-            applyCatalogSnapshot(payload);
-          } else if (payload.type === 'boutique:announcement' && payload.notification) {
-            setNotifications((prev) => upsertNotification(prev, payload.notification!));
-            showToast(payload.notification.title);
-          }
-        } catch {
-          // Ignore malformed message
+    const loadUserData = async () => {
+      try {
+        const [wishIds, cartState, addrList, orderList, notifList] = await Promise.all([
+          fetchWishlistProductIds(user.id),
+          fetchCartState(user.id),
+          fetchUserAddresses(user.id),
+          fetchCustomerOrders(user.id),
+          fetchCustomerNotifications(user.id),
+        ]);
+        if (!active || hydratedUserIdRef.current !== user.id) return;
+        setWishlistIds(wishIds);
+        setCart(cartState.items);
+        setGiftWrapState(cartState.giftPresentation);
+        setAddresses(addrList);
+        setOrders(orderList);
+        setNotifications(notifList);
+      } catch (err) {
+        if (active) {
+          showToast(
+            err instanceof Error ? err.message : 'Unable to sync your boutique account data.'
+          );
         }
-      });
-
-      socket.addEventListener('close', () => {
-        if (!closedByCleanup) {
-          reconnectTimer = window.setTimeout(connect, 3000);
-        }
-      });
+      }
     };
 
-    connect();
+    void loadUserData();
+
     return () => {
-      closedByCleanup = true;
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
-      socket?.close();
+      active = false;
     };
-  }, [applyCatalogSnapshot, customerToken, showToast]);
+  }, [isDevGuestSession, showToast, user]);
+
+  // Supabase Realtime subscription for private notifications & order status updates
+  useEffect(() => {
+    if (!user || !isSupabaseConfigured) return;
+
+    const unsubscribe = subscribeCustomerRealtime(user.id, {
+      onNotification: (incoming) => {
+        setNotifications((prev) => upsertNotification(prev, incoming));
+        showToast(incoming.title);
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          try {
+            new Notification(`VEY RASHA · ${incoming.title}`, {
+              body: incoming.message,
+            });
+          } catch {
+            // Ignore environments restricting Notification constructor
+          }
+        }
+      },
+      onOrderUpdated: (updatedOrder) => {
+        setOrders((prev) => upsertOrder(prev, updatedOrder));
+      },
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [showToast, user]);
 
   useEffect(() => {
     if (!toastMessage) return;
@@ -595,15 +515,37 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setSortBy('featured');
   }, []);
 
+  const requireCustomerSession = useCallback(
+    (actionLabel: string): boolean => {
+      if (user) return true;
+      if (isDevGuestSession) return true;
+      showToast(`Sign in with Google to ${actionLabel}`);
+      openWelcomeAuth('landing');
+      return false;
+    },
+    [isDevGuestSession, openWelcomeAuth, showToast, user]
+  );
+
   const toggleWishlist = useCallback(
     (productId: string) => {
-      setWishlistIds((prev) => {
-        const exists = prev.includes(productId);
-        showToast(exists ? 'Removed from your wishlist' : 'Saved to your wishlist');
-        return exists ? prev.filter((id) => id !== productId) : [...prev, productId];
-      });
+      if (!requireCustomerSession('save pieces to your wishlist')) return;
+
+      const currentlySaved = wishlistIds.includes(productId);
+      setWishlistIds((prev) =>
+        currentlySaved ? prev.filter((id) => id !== productId) : [productId, ...prev]
+      );
+      showToast(currentlySaved ? 'Removed from your wishlist' : 'Saved to your wishlist');
+
+      if (user) {
+        void toggleWishlistProduct(user.id, productId, currentlySaved).catch((err) => {
+          setWishlistIds((prev) =>
+            currentlySaved ? [productId, ...prev] : prev.filter((id) => id !== productId)
+          );
+          showToast(err instanceof Error ? err.message : 'Unable to update wishlist.');
+        });
+      }
     },
-    [showToast]
+    [requireCustomerSession, showToast, user, wishlistIds]
   );
 
   const isWishlisted = useCallback(
@@ -613,6 +555,21 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const addToCart = useCallback(
     (product: Product, size: string, color: ColorOption, quantity = 1) => {
+      if (!requireCustomerSession('add pieces to your shopping bag')) return;
+
+      if (user) {
+        void upsertCartItem(user.id, product.id, size, color, quantity)
+          .then((nextItems) => {
+            setCart(nextItems);
+            showToast(`Added ${product.name} to your bag`);
+          })
+          .catch((err) => {
+            showToast(err instanceof Error ? err.message : 'Unable to add piece to bag.');
+          });
+        return;
+      }
+
+      // Dev-only guest local fallback
       const itemKey = `${product.id}::${size}::${color.name}`;
       setCart((prev) => {
         const existing = prev.find((entry) => entry.id === itemKey);
@@ -634,30 +591,69 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       });
       showToast(`Added ${product.name} to your bag`);
     },
-    [showToast]
+    [requireCustomerSession, showToast, user]
   );
 
-  const updateCartQuantity = useCallback((cartItemId: string, delta: number) => {
-    setCart((prev) =>
-      prev
-        .map((item) =>
-          item.id === cartItemId ? { ...item, quantity: item.quantity + delta } : item
-        )
-        .filter((item) => item.quantity > 0)
-    );
-  }, []);
+  const updateCartQuantity = useCallback(
+    (cartItemId: string, delta: number) => {
+      const current = cart.find((c) => c.id === cartItemId);
+      if (!current) return;
+      const nextQty = current.quantity + delta;
+
+      if (user) {
+        void updateCartItemQuantity(user.id, cartItemId, nextQty)
+          .then((nextItems) => setCart(nextItems))
+          .catch((err) => {
+            showToast(err instanceof Error ? err.message : 'Unable to update bag quantity.');
+          });
+        return;
+      }
+
+      setCart((prev) =>
+        prev
+          .map((item) => (item.id === cartItemId ? { ...item, quantity: nextQty } : item))
+          .filter((item) => item.quantity > 0)
+      );
+    },
+    [cart, showToast, user]
+  );
 
   const removeFromCart = useCallback(
     (cartItemId: string) => {
+      if (user) {
+        void removeCartItem(user.id, cartItemId)
+          .then((nextItems) => {
+            setCart(nextItems);
+            showToast('Piece removed from bag');
+          })
+          .catch((err) => {
+            showToast(err instanceof Error ? err.message : 'Unable to remove piece from bag.');
+          });
+        return;
+      }
+
       setCart((prev) => prev.filter((item) => item.id !== cartItemId));
       showToast('Piece removed from bag');
     },
-    [showToast]
+    [showToast, user]
   );
 
   const clearCart = useCallback(() => {
     setCart([]);
-  }, []);
+    if (user) {
+      void clearUserCart(user.id).catch(() => undefined);
+    }
+  }, [user]);
+
+  const setGiftWrap = useCallback(
+    (val: boolean) => {
+      setGiftWrapState(val);
+      if (user) {
+        void setCartGiftPresentation(user.id, val).catch(() => undefined);
+      }
+    },
+    [user]
+  );
 
   const cartCount = useMemo(
     () => cart.reduce((acc, item) => acc + item.quantity, 0),
@@ -673,183 +669,148 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const submitOrderRequest = useCallback(
     async (payload: OrderRequestPayload): Promise<OrderSubmissionResult> => {
-      const token = await ensureCustomerToken();
-      if (!token) {
+      if (!user) {
         return {
           status: 'error',
-          message: 'Unable to initialize your order session. Please try again.',
+          message: 'Please sign in with Google before submitting an order request.',
         };
       }
 
-      try {
-        const response = await fetch(apiUrl('/api/orders'), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(payload),
-        });
-
-        const data = (await response.json()) as {
-          status?: string;
-          message?: string;
-          order?: OrderRecord;
-          error?: string;
-        };
-
-        if (!response.ok || !data.order) {
-          return {
-            status: 'error',
-            message: data.error ?? 'Unable to submit your order request.',
-          };
-        }
-
-        setOrders((prev) => upsertOrder(prev, data.order!));
-        return {
-          status: 'pending_review',
-          message:
-            data.message ??
-            'Your order request has been received. Our boutique will review your delivery details and confirm your delivery fee and final total.',
-          order: data.order,
-        };
-      } catch {
-        setBackendStatus('unavailable');
-        setBackendErrorMessage('Unable to reach the boutique order service.');
-        return {
-          status: 'error',
-          message: 'Network error while submitting your order request. Please try again.',
-        };
+      const result = await submitBoutiqueOrder(payload);
+      if (result.status === 'pending_review' && result.order) {
+        setOrders((prev) => upsertOrder(prev, result.order!));
+        void refreshNotifications();
       }
+      return result;
     },
-    [ensureCustomerToken]
+    [refreshNotifications, user]
   );
 
   const updateCustomer = useCallback(
     (patch: Partial<CustomerProfile>) => {
-      setCustomer((prev) => ({ ...prev, ...patch }));
-      showToast('Profile details updated');
+      void saveProfile(patch)
+        .then(() => {
+          showToast('Profile details updated');
+        })
+        .catch((err) => {
+          showToast(err instanceof Error ? err.message : 'Unable to save profile details.');
+        });
     },
-    [showToast]
+    [saveProfile, showToast]
   );
 
   const addAddress = useCallback(
-    (address: Omit<SavedAddress, 'id'>): SavedAddress => {
-      const newAddress: SavedAddress = {
-        ...address,
-        id: `addr-${Date.now()}`,
-      };
-      setAddresses((prev) => {
-        const base = address.isDefault
-          ? prev.map((a) => ({ ...a, isDefault: false }))
-          : prev;
-        return [...base, newAddress];
-      });
-      showToast('Address saved for this session');
-      return newAddress;
+    async (address: Omit<SavedAddress, 'id'>): Promise<SavedAddress | null> => {
+      if (!user) {
+        if (!isDevGuestSession) {
+          requireCustomerSession('save delivery addresses');
+          return null;
+        }
+        const localAddr: SavedAddress = { ...address, id: `addr-${Date.now()}` };
+        setAddresses((prev) => {
+          const base = address.isDefault
+            ? prev.map((a) => ({ ...a, isDefault: false }))
+            : prev;
+          return [...base, localAddr];
+        });
+        showToast('Address saved for dev session');
+        return localAddr;
+      }
+
+      try {
+        const created = await createUserAddress(user.id, address);
+        const list = await fetchUserAddresses(user.id);
+        setAddresses(list);
+        showToast('Delivery address saved');
+        return created;
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Unable to save delivery address.');
+        return null;
+      }
     },
-    [showToast]
+    [isDevGuestSession, requireCustomerSession, showToast, user]
   );
 
   const updateAddress = useCallback(
-    (id: string, patch: Omit<SavedAddress, 'id'>) => {
-      setAddresses((prev) =>
-        prev.map((a) => {
-          if (a.id === id) {
-            return { ...patch, id };
-          }
-          return patch.isDefault ? { ...a, isDefault: false } : a;
-        })
-      );
-      showToast('Delivery address updated');
+    async (id: string, patch: Omit<SavedAddress, 'id'>): Promise<void> => {
+      if (!user) {
+        setAddresses((prev) =>
+          prev.map((a) => {
+            if (a.id === id) return { ...patch, id };
+            return patch.isDefault ? { ...a, isDefault: false } : a;
+          })
+        );
+        showToast('Delivery address updated');
+        return;
+      }
+
+      try {
+        await updateUserAddress(user.id, id, patch);
+        const list = await fetchUserAddresses(user.id);
+        setAddresses(list);
+        showToast('Delivery address updated');
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Unable to update delivery address.');
+      }
     },
-    [showToast]
+    [showToast, user]
   );
 
   const removeAddress = useCallback(
-    (id: string) => {
-      setAddresses((prev) => prev.filter((a) => a.id !== id));
-      showToast('Address removed');
+    async (id: string): Promise<void> => {
+      if (!user) {
+        setAddresses((prev) => prev.filter((a) => a.id !== id));
+        showToast('Address removed');
+        return;
+      }
+
+      try {
+        await deleteUserAddress(user.id, id);
+        setAddresses((prev) => prev.filter((a) => a.id !== id));
+        showToast('Address removed');
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Unable to remove address.');
+      }
     },
-    [showToast]
+    [showToast, user]
   );
 
   const setDefaultAddress = useCallback(
-    (id: string) => {
-      setAddresses((prev) => prev.map((a) => ({ ...a, isDefault: a.id === id })));
-      showToast('Default delivery address updated');
-    },
-    [showToast]
-  );
-
-  const retrieveGuestOrder = useCallback(
-    async (
-      orderReference: string,
-      phone: string
-    ): Promise<{ ok: boolean; order?: OrderRecord; error?: string }> => {
-      const token = await ensureCustomerToken();
-      if (!token) {
-        return { ok: false, error: 'Unable to initialize your session. Please try again.' };
+    async (id: string): Promise<void> => {
+      if (!user) {
+        setAddresses((prev) => prev.map((a) => ({ ...a, isDefault: a.id === id })));
+        showToast('Default delivery address updated');
+        return;
       }
+
       try {
-        const res = await fetch(apiUrl('/api/orders/retrieve'), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ orderReference: orderReference.trim(), phone: phone.trim() }),
-        });
-        const data = (await res.json()) as {
-          order?: OrderRecord;
-          notifications?: NotificationItem[];
-          error?: string;
-        };
-        if (!res.ok || !data.order) {
-          return { ok: false, error: data.error ?? 'Order could not be verified.' };
-        }
-        setOrders((prev) => upsertOrder(prev, data.order!));
-        if (Array.isArray(data.notifications)) {
-          setNotifications((prev) => {
-            let next = [...prev];
-            for (const notif of data.notifications!) {
-              next = upsertNotification(next, notif);
-            }
-            return next;
-          });
-        }
-        showToast(`Retrieved order ${data.order.orderReference}`);
-        return { ok: true, order: data.order };
-      } catch {
-        setBackendStatus('unavailable');
-        return { ok: false, error: 'Network error while verifying your order.' };
+        await setDefaultUserAddress(user.id, id);
+        setAddresses((prev) => prev.map((a) => ({ ...a, isDefault: a.id === id })));
+        showToast('Default delivery address updated');
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Unable to update default address.');
       }
     },
-    [ensureCustomerToken, showToast]
+    [showToast, user]
   );
 
-  const markNotificationRead = useCallback((id: string) => {
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
-    const token = customerTokenRef.current;
-    if (token && !id.startsWith('announcement-')) {
-      void fetch(apiUrl(`/api/notifications/${encodeURIComponent(id)}/read`), {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-    }
-  }, []);
+  const markNotificationRead = useCallback(
+    (id: string) => {
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+      if (user) {
+        void markCustomerNotificationAsRead(user.id, id).catch(() => undefined);
+      }
+    },
+    [user]
+  );
 
   const markAllNotificationsRead = useCallback(() => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-    const token = customerTokenRef.current;
-    if (token) {
-      void fetch(apiUrl('/api/notifications/read-all'), {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+    if (user) {
+      void markAllCustomerNotificationsAsRead(user.id).catch(() => undefined);
     }
     showToast('All notifications marked as read');
-  }, [showToast]);
+  }, [showToast, user]);
 
   const unreadNotificationCount = useMemo(
     () => notifications.filter((n) => !n.read).length,
@@ -873,12 +834,8 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [showToast]);
 
   const retryCatalogLoad = useCallback(() => {
-    setCatalogError(null);
-    setIsCatalogLoading(true);
-    void checkBackendHealth().finally(() => {
-      setIsCatalogLoading(false);
-    });
-  }, [checkBackendHealth]);
+    void loadCatalogFromSupabase();
+  }, [loadCatalogFromSupabase]);
 
   const value = useMemo<BoutiqueContextValue>(
     () => ({
@@ -901,6 +858,8 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setSortBy,
       resetExploreFilters,
       products,
+      categories,
+      heroImageUrl,
       collections,
       campaigns,
       storeSettings,
@@ -919,7 +878,7 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       giftWrap,
       setGiftWrap,
       submitOrderRequest,
-      customer,
+      customer: profile,
       updateCustomer,
       addresses,
       addAddress,
@@ -929,7 +888,6 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       orders,
       isLoadingOrders,
       refreshOrders,
-      retrieveGuestOrder,
       notifications,
       unreadNotificationCount,
       isLoadingNotifications,
@@ -963,6 +921,8 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       sortBy,
       resetExploreFilters,
       products,
+      categories,
+      heroImageUrl,
       collections,
       campaigns,
       storeSettings,
@@ -978,8 +938,9 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       cartCount,
       cartSubtotalUsd,
       giftWrap,
+      setGiftWrap,
       submitOrderRequest,
-      customer,
+      profile,
       updateCustomer,
       addresses,
       addAddress,
@@ -989,7 +950,6 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       orders,
       isLoadingOrders,
       refreshOrders,
-      retrieveGuestOrder,
       notifications,
       unreadNotificationCount,
       isLoadingNotifications,

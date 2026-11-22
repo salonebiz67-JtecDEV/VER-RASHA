@@ -8,6 +8,7 @@ import {
   Sparkles,
   Truck,
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 import { useBoutique } from '../../context/BoutiqueContext';
 import type { NotificationType } from '../../types/boutique';
 import { formatPrice } from '../../utils/formatCurrency';
@@ -23,6 +24,7 @@ const FILTER_TABS: { id: NotificationFilter; label: string }[] = [
 ];
 
 export const NotificationsView: React.FC = () => {
+  const { isAuthenticated, isConfigured, isSigningIn, loginWithGoogle } = useAuth();
   const {
     notifications,
     markNotificationRead,
@@ -102,7 +104,30 @@ export const NotificationsView: React.FC = () => {
         </div>
       </div>
 
-      {backendStatus === 'unavailable' && (
+      {!isAuthenticated && (
+        <div className="mt-6 rounded-2xl border border-[#D8C3A5] bg-[#FCF9F4] p-6 text-center sm:p-8">
+          <p className="text-[11px] font-medium tracking-[0.16em] text-[#8C6D46] uppercase">
+            Private Order Alerts
+          </p>
+          <h2 className="mt-2 font-serif text-2xl font-medium text-[#302923]">
+            Sign In to Receive Live Updates
+          </h2>
+          <p className="mx-auto mt-2 max-w-md text-sm text-[#665B51]">
+            Sign in with Google to receive real-time order confirmations, confirmed delivery fees,
+            and dispatch milestones.
+          </p>
+          <button
+            type="button"
+            disabled={!isConfigured || isSigningIn}
+            onClick={() => void loginWithGoogle()}
+            className="mt-5 inline-flex min-h-[44px] items-center justify-center rounded-full bg-[#302923] px-6 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35] disabled:opacity-50"
+          >
+            {isSigningIn ? 'Redirecting to Google...' : 'Continue with Google'}
+          </button>
+        </div>
+      )}
+
+      {isAuthenticated && backendStatus === 'unavailable' && (
         <div
           role="status"
           className="mt-5 flex flex-col items-start justify-between gap-3 rounded-2xl border border-[#D8C3A5] bg-[#EFE7DA] px-5 py-4 text-xs text-[#302923] sm:flex-row sm:items-center"
@@ -111,7 +136,7 @@ export const NotificationsView: React.FC = () => {
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#8C6D46]" />
             <span>
               {backendErrorMessage ??
-                'Unable to reach the boutique notification server. Reconnect to load live updates.'}
+                'Unable to reach Supabase real-time services. Reconnect to load live updates.'}
             </span>
           </div>
           <button

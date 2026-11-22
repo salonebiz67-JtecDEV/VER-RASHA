@@ -10,7 +10,7 @@ import {
   Clock,
   Edit3,
   FileDown,
-  KeyRound,
+  LogOut,
   MapPin,
   Package,
   Plus,
@@ -23,6 +23,7 @@ import {
   User,
   XCircle,
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 import { useBoutique } from '../../context/BoutiqueContext';
 import type {
   CurrencyCode,
@@ -65,6 +66,14 @@ function getOrderStatusIcon(status: OrderStatus) {
 
 export const AccountView: React.FC = () => {
   const {
+    isAuthenticated,
+    isConfigured,
+    isSigningIn,
+    isDevGuestSession,
+    loginWithGoogle,
+    logout,
+  } = useAuth();
+  const {
     customer,
     updateCustomer,
     addresses,
@@ -75,7 +84,6 @@ export const AccountView: React.FC = () => {
     orders,
     isLoadingOrders,
     refreshOrders,
-    retrieveGuestOrder,
     notifications,
     unreadNotificationCount,
     isLoadingNotifications,
@@ -89,7 +97,6 @@ export const AccountView: React.FC = () => {
     currency,
     setCurrency,
     navigate,
-    openWelcomeAuth,
     backendStatus,
     backendErrorMessage,
     checkBackendHealth,
@@ -98,13 +105,6 @@ export const AccountView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AccountTab>('orders');
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [receiptOrder, setReceiptOrder] = useState<OrderRecord | null>(null);
-
-  // Guest Order Retrieval State
-  const [showRetrieveForm, setShowRetrieveForm] = useState(false);
-  const [retrieveRefInput, setRetrieveRefInput] = useState('');
-  const [retrievePhoneInput, setRetrievePhoneInput] = useState('');
-  const [retrieveError, setRetrieveError] = useState<string | null>(null);
-  const [isRetrievingOrder, setIsRetrievingOrder] = useState(false);
 
   // Personal Info Form State
   const [profileName, setProfileName] = useState(customer.fullName);
@@ -145,30 +145,6 @@ export const AccountView: React.FC = () => {
         : notifications.filter((n) => n.type === notifFilter),
     [notifications, notifFilter]
   );
-
-  const handleRetrieveGuestOrder = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setRetrieveError(null);
-    if (!retrieveRefInput.trim() || !retrievePhoneInput.trim()) {
-      setRetrieveError('Enter both your order reference and the phone number used at checkout.');
-      return;
-    }
-
-    setIsRetrievingOrder(true);
-    try {
-      const result = await retrieveGuestOrder(retrieveRefInput, retrievePhoneInput);
-      if (!result.ok || !result.order) {
-        setRetrieveError(result.error ?? 'Unable to verify order.');
-        return;
-      }
-      setRetrieveRefInput('');
-      setRetrievePhoneInput('');
-      setShowRetrieveForm(false);
-      setSelectedOrderId(result.order.id);
-    } finally {
-      setIsRetrievingOrder(false);
-    }
-  };
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
@@ -236,9 +212,9 @@ export const AccountView: React.FC = () => {
     };
 
     if (editingAddressId) {
-      updateAddress(editingAddressId, payload);
+      void updateAddress(editingAddressId, payload);
     } else {
-      addAddress(payload);
+      void addAddress(payload);
     }
     setShowAddressForm(false);
     setEditingAddressId(null);
@@ -276,7 +252,7 @@ export const AccountView: React.FC = () => {
 
   return (
     <div className="mx-auto max-w-7xl px-4 pt-6 pb-24 sm:px-6 md:pt-10 md:pb-16">
-      {/* Guest Account Header */}
+      {/* Client Account Header */}
       <section className="rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] p-6 sm:p-8">
         <div className="flex flex-col justify-between gap-6 sm:flex-row sm:items-center">
           <div className="flex items-start gap-4 sm:items-center">
@@ -285,10 +261,10 @@ export const AccountView: React.FC = () => {
             </div>
             <div className="min-w-0">
               <p className="text-[11px] font-medium tracking-[0.18em] text-[#8C6D46] uppercase">
-                Client Account
+                {isAuthenticated ? 'Verified Client Account' : 'Client Account'}
               </p>
               <h1 className="mt-1 font-serif text-3xl font-medium tracking-tight text-[#302923] sm:text-4xl">
-                {customer.fullName || 'Guest Account'}
+                {customer.fullName || (isAuthenticated ? 'VEY RASHA Client' : 'Sign In Required')}
               </h1>
               {hasContactDetails ? (
                 <p className="mt-1.5 truncate text-xs leading-relaxed text-[#665B51]">
@@ -296,21 +272,34 @@ export const AccountView: React.FC = () => {
                 </p>
               ) : (
                 <p className="mt-1.5 max-w-xl text-xs leading-relaxed text-[#665B51]">
-                  Shop and submit order requests freely as a guest, or retrieve a past order using
-                  your order reference and phone verification.
+                  {isDevGuestSession
+                    ? 'Development guest helper active. Sign in with Google for persistent Supabase orders and synced preferences.'
+                    : 'Sign in with your Google account to manage saved delivery addresses, place orders, and view live status updates.'}
                 </p>
               )}
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-center">
-            <button
-              type="button"
-              onClick={() => openWelcomeAuth('signin')}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-[#302923] px-5 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35]"
-            >
-              <span>Sign In</span>
-            </button>
+            {isAuthenticated ? (
+              <button
+                type="button"
+                onClick={() => void logout()}
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-[#D8C3A5] bg-[#F6F1E8] px-5 py-2.5 text-xs font-semibold tracking-wider text-[#302923] uppercase transition-colors hover:bg-[#EFE7DA]"
+              >
+                <LogOut className="h-3.5 w-3.5 text-[#8C6D46]" strokeWidth={1.6} />
+                <span>Sign Out</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={!isConfigured || isSigningIn}
+                onClick={() => void loginWithGoogle()}
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-[#302923] px-5 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35] disabled:opacity-50"
+              >
+                <span>{isSigningIn ? 'Redirecting...' : 'Continue with Google'}</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setActiveTab('notifications')}
@@ -645,7 +634,7 @@ export const AccountView: React.FC = () => {
               </article>
             </div>
           ) : (
-            /* ORDERS CARDS LIST + SECURE GUEST ORDER RETRIEVAL */
+            /* ORDERS CARDS LIST */
             <>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -657,18 +646,7 @@ export const AccountView: React.FC = () => {
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRetrieveError(null);
-                      setShowRetrieveForm((v) => !v);
-                    }}
-                    className="inline-flex min-h-[42px] items-center gap-2 rounded-full border border-[#D8C3A5] bg-[#FCF9F4] px-4 py-2 text-xs font-medium text-[#302923] transition-colors hover:bg-[#EFE7DA]"
-                  >
-                    <KeyRound className="h-3.5 w-3.5 text-[#8C6D46]" strokeWidth={1.6} />
-                    <span>Retrieve Guest Order</span>
-                  </button>
+                {isAuthenticated && (
                   <button
                     type="button"
                     onClick={() => void refreshOrders()}
@@ -680,124 +658,49 @@ export const AccountView: React.FC = () => {
                     />
                     <span>Refresh</span>
                   </button>
-                </div>
+                )}
               </div>
 
-              {/* Secure Guest Order Verification Form */}
-              {showRetrieveForm && (
-                <form
-                  onSubmit={handleRetrieveGuestOrder}
-                  className="rounded-2xl border border-[#D8C3A5] bg-[#FCF9F4] p-5 sm:p-6"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="font-serif text-xl font-medium text-[#302923]">
-                        Retrieve a Guest Order
-                      </h3>
-                      <p className="mt-1 text-xs text-[#665B51]">
-                        Enter your unique order reference and the phone number provided when you
-                        placed the request.
-                      </p>
-                    </div>
-                  </div>
-
-                  {retrieveError && (
-                    <div
-                      role="alert"
-                      className="mt-4 flex items-start gap-2 rounded-xl border border-[#8C6D46] bg-[#EFE7DA] px-4 py-3 text-xs text-[#302923]"
-                    >
-                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#8C6D46]" />
-                      <span>{retrieveError}</span>
-                    </div>
-                  )}
-
-                  <div className="mt-4 grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-                    <div>
-                      <label
-                        htmlFor="guest-order-ref"
-                        className="mb-1.5 block text-xs font-medium text-[#302923]"
-                      >
-                        Order Reference
-                      </label>
-                      <input
-                        id="guest-order-ref"
-                        type="text"
-                        required
-                        placeholder="e.g. VR-20261121-XXXXXX"
-                        value={retrieveRefInput}
-                        onChange={(e) => setRetrieveRefInput(e.target.value)}
-                        className="h-12 w-full rounded-xl border border-[#E4D8C5] bg-[#F6F1E8] px-3.5 text-sm text-[#302923] uppercase placeholder:normal-case placeholder:text-[#665B51]/70 focus:border-[#B59972] focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label
-                        htmlFor="guest-order-phone"
-                        className="mb-1.5 block text-xs font-medium text-[#302923]"
-                      >
-                        Checkout Phone Number
-                      </label>
-                      <input
-                        id="guest-order-phone"
-                        type="tel"
-                        required
-                        placeholder="Phone number entered at checkout"
-                        value={retrievePhoneInput}
-                        onChange={(e) => setRetrievePhoneInput(e.target.value)}
-                        className="h-12 w-full rounded-xl border border-[#E4D8C5] bg-[#F6F1E8] px-3.5 text-sm text-[#302923] placeholder:text-[#665B51]/70 focus:border-[#B59972] focus:outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap gap-3">
-                    <button
-                      type="submit"
-                      disabled={isRetrievingOrder}
-                      className="min-h-[44px] rounded-full bg-[#302923] px-6 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35] disabled:opacity-60"
-                    >
-                      {isRetrievingOrder ? 'Verifying...' : 'Verify & View Order'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowRetrieveForm(false)}
-                      className="min-h-[44px] rounded-full border border-[#E4D8C5] px-5 py-2.5 text-xs font-medium text-[#665B51] hover:text-[#302923]"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {orders.length === 0 ? (
+              {!isAuthenticated ? (
                 <div className="flex flex-col items-center rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] px-6 py-16 text-center">
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#EFE7DA] text-[#8C6D46]">
                     <Package className="h-6 w-6" strokeWidth={1.5} />
                   </div>
                   <h3 className="mt-4 font-serif text-2xl font-medium text-[#302923]">
-                    No orders in this session yet
+                    Sign in to track your orders
                   </h3>
                   <p className="mt-2 max-w-md text-sm leading-relaxed text-[#665B51]">
-                    Submit an order request as a guest at checkout, or verify an existing order
-                    reference and phone number to view its live status and receipt.
+                    Sign in with your Google account to view submitted order requests, confirmed
+                    delivery fees, printable receipts, and live dispatch updates.
                   </p>
-                  <div className="mt-6 flex flex-wrap justify-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => navigate('explore')}
-                      className="min-h-[46px] rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.12em] text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35]"
-                    >
-                      Shop Collection
-                    </button>
-                    {!showRetrieveForm && (
-                      <button
-                        type="button"
-                        onClick={() => setShowRetrieveForm(true)}
-                        className="min-h-[46px] rounded-full border border-[#D8C3A5] px-6 py-3 text-xs font-medium tracking-wider text-[#302923] uppercase hover:bg-[#EFE7DA]"
-                      >
-                        Find Guest Order
-                      </button>
-                    )}
+                  <button
+                    type="button"
+                    disabled={!isConfigured || isSigningIn}
+                    onClick={() => void loginWithGoogle()}
+                    className="mt-6 min-h-[46px] rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.12em] text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35] disabled:opacity-50"
+                  >
+                    {isSigningIn ? 'Redirecting to Google...' : 'Continue with Google'}
+                  </button>
+                </div>
+              ) : orders.length === 0 ? (
+                <div className="flex flex-col items-center rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] px-6 py-16 text-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#EFE7DA] text-[#8C6D46]">
+                    <Package className="h-6 w-6" strokeWidth={1.5} />
                   </div>
+                  <h3 className="mt-4 font-serif text-2xl font-medium text-[#302923]">
+                    No orders placed yet
+                  </h3>
+                  <p className="mt-2 max-w-md text-sm leading-relaxed text-[#665B51]">
+                    When you submit an order request at checkout, it will appear here with real-time
+                    boutique status updates and printable receipts.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => navigate('explore')}
+                    className="mt-6 min-h-[46px] rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.12em] text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35]"
+                  >
+                    Shop Collection
+                  </button>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1278,7 +1181,7 @@ export const AccountView: React.FC = () => {
                     {!addr.isDefault ? (
                       <button
                         type="button"
-                        onClick={() => setDefaultAddress(addr.id)}
+                        onClick={() => void setDefaultAddress(addr.id)}
                         className="inline-flex min-h-[40px] items-center gap-1.5 text-xs font-medium text-[#302923] hover:text-[#8C6D46]"
                       >
                         <Check className="h-3.5 w-3.5" />
@@ -1300,7 +1203,7 @@ export const AccountView: React.FC = () => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => removeAddress(addr.id)}
+                        onClick={() => void removeAddress(addr.id)}
                         aria-label={`Delete ${addr.label}`}
                         className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full px-3 text-xs font-medium text-[#665B51] hover:bg-[#EFE7DA] hover:text-[#302923]"
                       >

@@ -1,6 +1,5 @@
 import React, { useMemo } from 'react';
 import { AlertCircle, RotateCcw, Search, SlidersHorizontal, X } from 'lucide-react';
-import { CATEGORIES } from '../../data/catalog';
 import { type PriceBand, type SortOption, useBoutique } from '../../context/BoutiqueContext';
 import { formatPrice } from '../../utils/formatCurrency';
 import { ProductCard } from '../ui/ProductCard';
@@ -8,6 +7,7 @@ import { ProductCard } from '../ui/ProductCard';
 export const ExploreView: React.FC = () => {
   const {
     products,
+    categories,
     searchQuery,
     setSearchQuery,
     activeCategory,
@@ -161,7 +161,7 @@ export const ExploreView: React.FC = () => {
           role="tablist"
           aria-label="Filter by category"
         >
-          {CATEGORIES.map((category) => {
+          {categories.map((category) => {
             const active = activeCategory === category.slug;
             return (
               <button
