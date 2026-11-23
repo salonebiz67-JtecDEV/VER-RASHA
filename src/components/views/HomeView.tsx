@@ -24,8 +24,22 @@ export const HomeView: React.FC = () => {
   const newArrivals = products.filter((p) => p.isNewArrival).slice(0, 4);
   const bestSellers = products.filter((p) => p.isBestSeller).slice(0, 4);
   const visualCategories = categories.filter((cat) => cat.slug !== 'all' && Boolean(cat.image));
-  const campaign = campaigns[0];
+  const heroCampaign = campaigns.find((c) => Boolean(c.image)) ?? null;
+  const featureCampaign = campaigns.find((c) => c.id !== heroCampaign?.id) ?? null;
   const featuredProduct = products[0];
+
+  const fallbackHeroUrl = heroImageUrl || `${import.meta.env.BASE_URL}images/hero.jpg`;
+  const heroSrc = heroCampaign?.image || fallbackHeroUrl;
+  const heroKicker = heroCampaign?.kicker?.trim() || 'Autumn — Winter Collection';
+  const heroTitle = heroCampaign?.title?.trim() || 'Quiet Elegance in Motion';
+  const heroDescription =
+    heroCampaign?.description?.trim() ||
+    'Evening gowns, structured tailoring, and signature accessories designed with timeless restraint.';
+  const heroCtaLabel = heroCampaign?.ctaLabel?.trim() || 'Shop Collection';
+  const heroCategory = heroCampaign?.targetCategory || 'all';
+  const heroAlt = heroCampaign?.title?.trim()
+    ? `${heroCampaign.title.trim()} — VEY RASHA`
+    : 'VEY RASHA editorial silhouette';
 
   const liveSearchMatches = useMemo(() => {
     const q = localSearch.trim().toLowerCase();
@@ -52,8 +66,8 @@ export const HomeView: React.FC = () => {
         <div className="relative overflow-hidden rounded-2xl border border-[#E4D8C5] bg-[#302923] sm:rounded-3xl">
           <div className="aspect-[3/4] w-full sm:aspect-[16/9] lg:aspect-[16/7.5]">
             <LuxuryImage
-              src={heroImageUrl}
-              alt="VEY RASHA Autumn-Winter campaign silhouette in flowing champagne evening gown"
+              src={heroSrc}
+              alt={heroAlt}
               loading="eager"
               fetchPriority="high"
               className="h-full w-full"
@@ -61,34 +75,37 @@ export const HomeView: React.FC = () => {
             />
           </div>
           <div
-            className="absolute inset-0 bg-gradient-to-t from-[#1E1813]/92 via-[#1E1813]/38 to-[#1E1813]/10"
+            className="absolute inset-0 bg-gradient-to-t from-[#1E1813]/92 via-[#1E1813]/42 to-[#1E1813]/12"
             aria-hidden="true"
           />
           <div className="absolute inset-x-0 bottom-0 p-6 sm:p-10 lg:p-14">
-            <p className="text-[11px] font-medium tracking-[0.2em] text-[#D8C3A5] uppercase sm:text-xs">
-              Autumn — Winter Collection
-            </p>
+            {heroKicker && (
+              <p className="text-[11px] font-medium tracking-[0.2em] text-[#D8C3A5] uppercase sm:text-xs">
+                {heroKicker}
+              </p>
+            )}
             <h1 className="mt-2 max-w-xl font-serif text-4xl font-normal leading-[1.05] text-[#F6F1E8] sm:text-5xl lg:text-6xl">
-              Quiet Elegance in Motion
+              {heroTitle}
             </h1>
-            <p className="mt-3 max-w-md text-sm leading-relaxed text-[#F6F1E8]/85 sm:text-base">
-              Evening gowns, structured tailoring, and signature accessories designed with timeless
-              feminine restraint.
-            </p>
+            {heroDescription && (
+              <p className="mt-3 max-w-md text-sm leading-relaxed text-[#F6F1E8]/90 sm:text-base">
+                {heroDescription}
+              </p>
+            )}
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                onClick={() => navigate('explore', { category: 'all' })}
+                onClick={() => navigate('explore', { category: heroCategory })}
                 className="inline-flex min-h-[46px] items-center gap-2 rounded-full border border-[#D8C3A5]/70 bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.14em] text-[#F6F1E8] uppercase shadow-sm transition-all duration-150 hover:bg-[#463D35] active:scale-[0.98] whitespace-nowrap"
               >
-                <span>Shop Collection</span>
+                <span>{heroCtaLabel}</span>
                 <ArrowRight className="h-4 w-4 text-[#D8C3A5]" strokeWidth={1.75} />
               </button>
               {featuredProduct && (
                 <button
                   type="button"
                   onClick={() => navigate('product', { productId: featuredProduct.id })}
-                  className="inline-flex min-h-[46px] items-center rounded-full border border-[#F6F1E8]/45 bg-[#302923]/45 px-6 py-3 text-xs font-medium tracking-[0.12em] text-[#F6F1E8] uppercase backdrop-blur-sm transition-colors duration-150 hover:bg-[#302923]/75 active:scale-[0.98] whitespace-nowrap"
+                  className="inline-flex min-h-[46px] items-center rounded-full border border-[#F6F1E8]/45 bg-[#302923]/55 px-6 py-3 text-xs font-medium tracking-[0.12em] text-[#F6F1E8] uppercase backdrop-blur-sm transition-colors duration-150 hover:bg-[#302923]/80 active:scale-[0.98] whitespace-nowrap"
                 >
                   Featured Piece
                 </button>
@@ -205,17 +222,17 @@ export const HomeView: React.FC = () => {
           role="alert"
           className="rounded-2xl border border-[#D8C3A5] bg-[#FCF9F4] px-6 py-12 text-center"
         >
-          <AlertCircle className="mx-auto h-7 w-7 text-[#8C6D46]" strokeWidth={1.5} />
+          <AlertCircle className="mx-auto h-7 w-7 text-[#7A5D39]" strokeWidth={1.5} />
           <h2 className="mt-3 font-serif text-2xl font-medium text-[#302923]">
-            Collection Temporarily Unavailable
+            Couldn&apos;t load collection
           </h2>
           <p className="mx-auto mt-1 max-w-md text-sm text-[#665B51]">{catalogError}</p>
           <button
             type="button"
             onClick={retryCatalogLoad}
-            className="mt-5 min-h-[44px] rounded-full bg-[#302923] px-6 py-2.5 text-xs font-medium text-[#F6F1E8] hover:bg-[#463D35]"
+            className="mt-5 min-h-[44px] rounded-full bg-[#302923] px-6 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35]"
           >
-            Retry Loading
+            Couldn&apos;t load, tap to retry
           </button>
         </section>
       )}
@@ -233,8 +250,8 @@ export const HomeView: React.FC = () => {
       )}
 
       {!catalogError && !isCatalogLoading && products.length === 0 && (
-        <section className="rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] px-6 py-16 text-center">
-          <p className="text-[11px] font-medium tracking-[0.18em] text-[#8C6D46] uppercase">
+        <section className="rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] px-6 py-14 text-center">
+          <p className="text-[11px] font-medium tracking-[0.18em] text-[#7A5D39] uppercase">
             Seasonal Atelier
           </p>
           <h2 className="mt-2 font-serif text-3xl font-medium text-[#302923]">
@@ -244,6 +261,13 @@ export const HomeView: React.FC = () => {
             Our upcoming curated pieces are currently being prepared for release. Check Boutique
             Updates for launch announcements.
           </p>
+          <button
+            type="button"
+            onClick={() => navigate('explore')}
+            className="mt-6 min-h-[46px] rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.12em] text-[#F6F1E8] uppercase hover:bg-[#463D35]"
+          >
+            Shop now
+          </button>
         </section>
       )}
 
@@ -284,6 +308,7 @@ export const HomeView: React.FC = () => {
                         <LuxuryImage
                           src={cat.image ?? ''}
                           alt={cat.label}
+                          loading="lazy"
                           className="h-full w-full"
                           imgClassName="transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-[1.04]"
                         />
@@ -356,6 +381,7 @@ export const HomeView: React.FC = () => {
                       <LuxuryImage
                         src={col.image}
                         alt={col.title}
+                        loading="lazy"
                         className="h-full w-full"
                         imgClassName="transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-[1.035]"
                       />
@@ -387,31 +413,38 @@ export const HomeView: React.FC = () => {
           )}
 
           {/* Editorial Campaign Feature */}
-          {campaign && (
+          {featureCampaign && (
             <section aria-label="Featured Editorial Campaign">
               <div className="grid overflow-hidden rounded-2xl border border-[#E4D8C5] bg-[#EFE7DA] sm:rounded-3xl lg:grid-cols-12 lg:items-stretch">
                 <div className="lg:col-span-7">
                   <div className="aspect-[16/10] h-full w-full lg:aspect-auto">
-                    <LuxuryImage src={campaign.image} alt={campaign.title} className="h-full w-full" />
+                    <LuxuryImage
+                      src={featureCampaign.image}
+                      alt={featureCampaign.title}
+                      loading="lazy"
+                      className="h-full w-full"
+                    />
                   </div>
                 </div>
                 <div className="flex flex-col justify-center p-6 sm:p-10 lg:col-span-5 lg:p-12">
-                  <p className="text-[11px] font-medium tracking-[0.18em] text-[#8C6D46] uppercase">
-                    {campaign.kicker}
+                  <p className="text-[11px] font-medium tracking-[0.18em] text-[#7A5D39] uppercase">
+                    {featureCampaign.kicker}
                   </p>
                   <h2 className="mt-2 font-serif text-2xl font-medium leading-tight text-[#302923] sm:text-3xl lg:text-4xl">
-                    {campaign.title}
+                    {featureCampaign.title}
                   </h2>
                   <p className="mt-3 text-sm leading-relaxed text-[#665B51] sm:text-[15px]">
-                    {campaign.description}
+                    {featureCampaign.description}
                   </p>
                   <div className="mt-6">
                     <button
                       type="button"
-                      onClick={() => navigate('explore', { category: campaign.targetCategory })}
+                      onClick={() =>
+                        navigate('explore', { category: featureCampaign.targetCategory })
+                      }
                       className="inline-flex min-h-[46px] items-center gap-2 rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.14em] text-[#F6F1E8] uppercase transition-colors duration-150 hover:bg-[#463D35] active:scale-[0.98] whitespace-nowrap"
                     >
-                      <span>{campaign.ctaLabel}</span>
+                      <span>{featureCampaign.ctaLabel}</span>
                       <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
                     </button>
                   </div>

@@ -155,6 +155,51 @@ export async function fetchCustomerOrderById(
   return mapDbOrderRow(data as DbOrderRow);
 }
 
+async function extractEdgeFunctionErrorMessage(error: unknown): Promise<string> {
+  const fallback =
+    'Unable to reach the boutique order service. Please verify your connection and sign-in session.';
+
+  if (!error || typeof error !== 'object') {
+    return fallback;
+  }
+
+  const errObj = error as { message?: unknown; context?: unknown };
+  const ctx = errObj.context;
+
+  if (ctx && typeof Response !== 'undefined' && ctx instanceof Response) {
+    try {
+      const cloned = ctx.clone();
+      const rawText = await cloned.text();
+      if (rawText) {
+        try {
+          const parsed = JSON.parse(rawText) as { error?: unknown; message?: unknown };
+          if (typeof parsed.error === 'string' && parsed.error.trim()) {
+            return parsed.error.trim();
+          }
+          if (typeof parsed.message === 'string' && parsed.message.trim()) {
+            return parsed.message.trim();
+          }
+        } catch {
+          return rawText.trim();
+        }
+      }
+    } catch (readErr) {
+      console.error('Unable to read create-order error response:', readErr);
+    }
+  } else if (ctx && typeof ctx === 'object' && 'error' in ctx) {
+    const ctxError = (ctx as { error?: unknown }).error;
+    if (typeof ctxError === 'string' && ctxError.trim()) {
+      return ctxError.trim();
+    }
+  }
+
+  if (typeof errObj.message === 'string' && errObj.message.trim()) {
+    return errObj.message.trim();
+  }
+
+  return fallback;
+}
+
 export async function submitBoutiqueOrder(
   payload: OrderRequestPayload
 ): Promise<OrderSubmissionResult> {
@@ -165,36 +210,69 @@ export async function submitBoutiqueOrder(
     };
   }
 
-  const { data, error } = await supabase.functions.invoke<{
-    status?: string;
-    message?: string;
-    order?: DbOrderRow;
-    error?: string;
-  }>('create-order', {
-    body: payload,
-  });
+  try {
+    const { data, error } = await supabase.functions.invoke<{
+      status?: string;
+      message?: string;
+      order?: DbOrderRow;
+      error?: string;
+    }>('create-order', {
+      body: {
+        customer: {
+          fullName: payload.customer.fullName,
+          phone: payload.customer.phone,
+          country: payload.customer.country,
+          city: payload.customer.city,
+          area: payload.customer.area,
+          deliveryAddress: payload.customer.deliveryAddress,
+          ...(payload.customer.deliveryInstructions
+            ? { deliveryInstructions: payload.customer.deliveryInstructions }
+            : {}),
+        },
+        items: payload.items.map((item) => ({
+          productId: item.productId,
+          size: item.size,
+          colorName: item.colorName,
+          quantity: item.quantity,
+        })),
+        giftPresentation: Boolean(payload.giftPresentation),
+        currency: payload.currency,
+      },
+    });
 
-  if (error) {
+    if (error) {
+      const realMessage = await extractEdgeFunctionErrorMessage(error);
+      console.error('create-order invocation error:', { error, message: realMessage });
+      return {
+        status: 'error',
+        message: realMessage,
+      };
+    }
+
+    if (!data?.order || data.error) {
+      const msg = data?.error || 'Unable to submit your order request.';
+      console.error('create-order returned invalid response:', data);
+      return {
+        status: 'error',
+        message: msg,
+      };
+    }
+
+    return {
+      status: 'pending_review',
+      message:
+        data.message ||
+        'Your order request has been received. Our boutique will review your delivery details and confirm your delivery fee and final total.',
+      order: mapDbOrderRow(data.order),
+    };
+  } catch (err) {
+    console.error('create-order unexpected failure:', err);
     return {
       status: 'error',
       message:
-        error.message ||
-        'Unable to reach the boutique order service. Please verify your connection and sign-in session.',
+        err instanceof Error && err.message
+          ? err.message
+          : 'Unable to reach the boutique order service. Please verify your connection and sign-in session.',
     };
   }
-
-  if (!data?.order || data.error) {
-    return {
-      status: 'error',
-      message: data?.error || 'Unable to submit your order request.',
-    };
-  }
-
-  return {
-    status: 'pending_review',
-    message:
-      data.message ||
-      'Your order request has been received. Our boutique will review your delivery details and confirm your delivery fee and final total.',
-    order: mapDbOrderRow(data.order),
-  };
 }

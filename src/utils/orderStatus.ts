@@ -1,10 +1,10 @@
 import type { OrderStatus, PaymentStatus } from '../types/boutique';
 
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
-  PENDING_REVIEW: 'Pending Review',
+  PENDING_REVIEW: 'Under review',
   CONFIRMED: 'Confirmed',
   PROCESSING: 'Processing',
-  READY_FOR_DISPATCH: 'Ready for Dispatch',
+  READY_FOR_DISPATCH: 'Ready for dispatch',
   SHIPPED: 'Shipped',
   DELIVERED: 'Delivered',
   CANCELLED: 'Cancelled',
@@ -18,10 +18,10 @@ export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
 };
 
 export const ORDER_TIMELINE_STEPS: { status: OrderStatus; label: string }[] = [
-  { status: 'PENDING_REVIEW', label: 'Pending Review' },
+  { status: 'PENDING_REVIEW', label: 'Under review' },
   { status: 'CONFIRMED', label: 'Confirmed' },
   { status: 'PROCESSING', label: 'Processing' },
-  { status: 'READY_FOR_DISPATCH', label: 'Ready' },
+  { status: 'READY_FOR_DISPATCH', label: 'Ready for dispatch' },
   { status: 'SHIPPED', label: 'Shipped' },
   { status: 'DELIVERED', label: 'Delivered' },
 ];

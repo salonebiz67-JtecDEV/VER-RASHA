@@ -2,6 +2,7 @@ import React from 'react';
 import { ArrowRight, Minus, Plus, ShoppingBag, Trash2 } from 'lucide-react';
 import { useBoutique } from '../../context/BoutiqueContext';
 import { formatPrice } from '../../utils/formatCurrency';
+import { getMaxStockForSelection } from '../../utils/stock';
 import { LuxuryImage } from '../ui/LuxuryImage';
 
 export const CartView: React.FC = () => {
@@ -20,10 +21,10 @@ export const CartView: React.FC = () => {
   } = useBoutique();
 
   return (
-    <div className="mx-auto max-w-7xl px-4 pt-6 pb-20 sm:px-6 md:pt-10 md:pb-14">
+    <div className="mx-auto max-w-7xl px-4 pt-6 pb-16 sm:px-6 md:pt-10 md:pb-14">
       <div className="flex flex-col justify-between gap-2 border-b border-[#E4D8C5] pb-5 sm:flex-row sm:items-end">
         <div>
-          <p className="text-[11px] font-medium tracking-[0.18em] text-[#8C6D46] uppercase">
+          <p className="text-[11px] font-medium tracking-[0.18em] text-[#7A5D39] uppercase">
             Your Selection
           </p>
           <h1 className="mt-1 font-serif text-3xl font-medium text-[#302923] sm:text-4xl">
@@ -44,15 +45,15 @@ export const CartView: React.FC = () => {
             Your shopping bag is empty
           </h2>
           <p className="mt-2 max-w-md text-sm text-[#665B51]">
-            Explore our collection of dresses, tailoring, handbags, and fine jewellery to add pieces
-            to your bag.
+            Explore our collection of dresses, tailoring, handbags, and jewellery to add pieces to
+            your bag.
           </p>
           <button
             type="button"
             onClick={() => navigate('explore')}
             className="mt-6 min-h-[46px] rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.12em] text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35] active:scale-[0.98]"
           >
-            Shop Collection
+            Shop now
           </button>
         </div>
       ) : (
@@ -64,6 +65,12 @@ export const CartView: React.FC = () => {
               if (!product) return null;
 
               const lineTotalUsd = product.priceUsd * item.quantity;
+              const maxStock = getMaxStockForSelection(
+                product,
+                item.selectedSize,
+                item.selectedColor.name
+              );
+              const atMaxStock = item.quantity >= maxStock;
 
               return (
                 <article
@@ -92,7 +99,7 @@ export const CartView: React.FC = () => {
                       <div>
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <p className="text-[11px] font-medium tracking-[0.12em] text-[#8C6D46] uppercase">
+                            <p className="text-[11px] font-medium tracking-[0.12em] text-[#7A5D39] uppercase">
                               {product.categoryLabel}
                             </p>
                             <button
@@ -133,12 +140,19 @@ export const CartView: React.FC = () => {
                             {formatPrice(product.priceUsd, currency)} each
                           </p>
                         )}
+                        {maxStock > 0 && maxStock <= 5 && (
+                          <p className="mt-1 text-[11px] font-medium text-[#7A5D39]">
+                            {atMaxStock
+                              ? `Only ${maxStock} available (max selected)`
+                              : `Only ${maxStock} left`}
+                          </p>
+                        )}
                       </div>
 
                       {/* Quantity Stepper & Remove Button */}
                       <div className="mt-4 flex items-center justify-between gap-3 border-t border-[#E4D8C5]/70 pt-3">
                         <div
-                          className="inline-flex h-10 items-center rounded-full border border-[#D8C3A5] bg-[#F6F1E8] px-1"
+                          className="inline-flex min-h-[44px] items-center rounded-full border border-[#D8C3A5] bg-[#F6F1E8] px-1"
                           role="group"
                           aria-label={`Quantity for ${product.name}`}
                         >
@@ -146,7 +160,7 @@ export const CartView: React.FC = () => {
                             type="button"
                             onClick={() => updateCartQuantity(item.id, -1)}
                             aria-label={`Decrease quantity of ${product.name}`}
-                            className="flex h-8 w-8 items-center justify-center rounded-full text-[#302923] transition-colors hover:bg-[#EFE7DA] active:scale-95"
+                            className="flex h-10 w-10 items-center justify-center rounded-full text-[#302923] transition-colors hover:bg-[#EFE7DA] active:scale-95"
                           >
                             <Minus className="h-3.5 w-3.5" />
                           </button>
@@ -155,9 +169,10 @@ export const CartView: React.FC = () => {
                           </span>
                           <button
                             type="button"
+                            disabled={atMaxStock}
                             onClick={() => updateCartQuantity(item.id, 1)}
                             aria-label={`Increase quantity of ${product.name}`}
-                            className="flex h-8 w-8 items-center justify-center rounded-full text-[#302923] transition-colors hover:bg-[#EFE7DA] active:scale-95"
+                            className="flex h-10 w-10 items-center justify-center rounded-full text-[#302923] transition-colors hover:bg-[#EFE7DA] active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             <Plus className="h-3.5 w-3.5" />
                           </button>
@@ -167,7 +182,7 @@ export const CartView: React.FC = () => {
                           type="button"
                           onClick={() => removeFromCart(item.id)}
                           aria-label={`Remove ${product.name} from bag`}
-                          className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full px-3 text-xs font-medium text-[#665B51] transition-colors hover:bg-[#EFE7DA] hover:text-[#302923] active:scale-95"
+                          className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full px-3 text-xs font-medium text-[#665B51] transition-colors hover:bg-[#EFE7DA] hover:text-[#302923] active:scale-95"
                         >
                           <Trash2 className="h-3.5 w-3.5" strokeWidth={1.6} />
                           <span>Remove</span>

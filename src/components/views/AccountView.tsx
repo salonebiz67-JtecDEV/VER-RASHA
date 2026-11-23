@@ -26,12 +26,13 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useBoutique } from '../../context/BoutiqueContext';
 import type {
-  CurrencyCode,
+  AccountTab,
   NotificationType,
   OrderRecord,
   OrderStatus,
   SavedAddress,
 } from '../../types/boutique';
+import { STORE_CURRENCY } from '../../data/storeConfig';
 import { formatPrice } from '../../utils/formatCurrency';
 import {
   formatOrderDate,
@@ -41,10 +42,10 @@ import {
   ORDER_TIMELINE_STEPS,
   PAYMENT_STATUS_LABELS,
 } from '../../utils/orderStatus';
+import { CustomerAuthPanel } from '../auth/CustomerAuthPanel';
 import { PrintableReceiptModal } from '../orders/PrintableReceiptModal';
 import { LuxuryImage } from '../ui/LuxuryImage';
 
-type AccountTab = 'orders' | 'profile' | 'addresses' | 'notifications' | 'preferences';
 type NotificationFilter = 'all' | NotificationType;
 
 function getOrderStatusIcon(status: OrderStatus) {
@@ -65,15 +66,12 @@ function getOrderStatusIcon(status: OrderStatus) {
 }
 
 export const AccountView: React.FC = () => {
+  const { isAuthenticated, logout } = useAuth();
   const {
-    isAuthenticated,
-    isConfigured,
-    isSigningIn,
-    isDevGuestSession,
-    loginWithGoogle,
-    logout,
-  } = useAuth();
-  const {
+    accountTab: activeTab,
+    setAccountTab: setActiveTab,
+    selectedOrderId,
+    setSelectedOrderId,
     customer,
     updateCustomer,
     addresses,
@@ -93,17 +91,12 @@ export const AccountView: React.FC = () => {
     markAllNotificationsRead,
     browserNotificationPermission,
     requestBrowserNotifications,
-    storeSettings,
-    currency,
-    setCurrency,
     navigate,
     backendStatus,
     backendErrorMessage,
     checkBackendHealth,
   } = useBoutique();
 
-  const [activeTab, setActiveTab] = useState<AccountTab>('orders');
-  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [receiptOrder, setReceiptOrder] = useState<OrderRecord | null>(null);
 
   // Personal Info Form State
@@ -260,11 +253,11 @@ export const AccountView: React.FC = () => {
               <User className="h-6 w-6" strokeWidth={1.5} />
             </div>
             <div className="min-w-0">
-              <p className="text-[11px] font-medium tracking-[0.18em] text-[#8C6D46] uppercase">
+              <p className="text-[11px] font-medium tracking-[0.18em] text-[#7A5D39] uppercase">
                 {isAuthenticated ? 'Verified Client Account' : 'Client Account'}
               </p>
               <h1 className="mt-1 font-serif text-3xl font-medium tracking-tight text-[#302923] sm:text-4xl">
-                {customer.fullName || (isAuthenticated ? 'VEY RASHA Client' : 'Sign In Required')}
+                {customer.fullName || (isAuthenticated ? 'VEY RASHA Client' : 'Client Access')}
               </h1>
               {hasContactDetails ? (
                 <p className="mt-1.5 truncate text-xs leading-relaxed text-[#665B51]">
@@ -272,9 +265,8 @@ export const AccountView: React.FC = () => {
                 </p>
               ) : (
                 <p className="mt-1.5 max-w-xl text-xs leading-relaxed text-[#665B51]">
-                  {isDevGuestSession
-                    ? 'Development guest helper active. Sign in with Google for persistent Supabase orders and synced preferences.'
-                    : 'Sign in with your Google account to manage saved delivery addresses, place orders, and view live status updates.'}
+                  Sign in with Google or your email and password to manage saved delivery addresses,
+                  place orders, and view live status updates.
                 </p>
               )}
             </div>
@@ -287,17 +279,19 @@ export const AccountView: React.FC = () => {
                 onClick={() => void logout()}
                 className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-[#D8C3A5] bg-[#F6F1E8] px-5 py-2.5 text-xs font-semibold tracking-wider text-[#302923] uppercase transition-colors hover:bg-[#EFE7DA]"
               >
-                <LogOut className="h-3.5 w-3.5 text-[#8C6D46]" strokeWidth={1.6} />
+                <LogOut className="h-3.5 w-3.5 text-[#7A5D39]" strokeWidth={1.6} />
                 <span>Sign Out</span>
               </button>
             ) : (
               <button
                 type="button"
-                disabled={!isConfigured || isSigningIn}
-                onClick={() => void loginWithGoogle()}
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-[#302923] px-5 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35] disabled:opacity-50"
+                onClick={() => {
+                  setSelectedOrderId(null);
+                  setActiveTab('orders');
+                }}
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-[#302923] px-5 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35]"
               >
-                <span>{isSigningIn ? 'Redirecting...' : 'Continue with Google'}</span>
+                <span>Sign In / Register</span>
               </button>
             )}
             <button
@@ -305,7 +299,7 @@ export const AccountView: React.FC = () => {
               onClick={() => setActiveTab('notifications')}
               className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-[#D8C3A5] bg-[#F6F1E8] px-5 py-2.5 text-xs font-medium text-[#302923] transition-colors hover:bg-[#EFE7DA]"
             >
-              <Bell className="h-4 w-4 text-[#8C6D46]" strokeWidth={1.6} />
+              <Bell className="h-4 w-4 text-[#7A5D39]" strokeWidth={1.6} />
               <span>Notifications</span>
               {unreadNotificationCount > 0 && (
                 <span className="rounded-full bg-[#302923] px-2 py-0.5 text-[10px] font-semibold text-[#F6F1E8] tabular-nums">
@@ -323,16 +317,16 @@ export const AccountView: React.FC = () => {
           className="mt-5 flex flex-col items-start justify-between gap-3 rounded-2xl border border-[#D8C3A5] bg-[#EFE7DA] px-5 py-4 text-xs text-[#302923] sm:flex-row sm:items-center"
         >
           <div className="flex items-start gap-2.5">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#8C6D46]" />
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#7A5D39]" />
             <span>
               {backendErrorMessage ??
-                'Unable to reach the boutique server. Order verification and live updates require an active backend connection.'}
+                'Unable to reach the boutique server. Order verification and live updates require an active connection.'}
             </span>
           </div>
           <button
             type="button"
             onClick={() => void checkBackendHealth()}
-            className="inline-flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-full border border-[#302923]/30 bg-[#FCF9F4] px-4 py-1.5 text-[11px] font-semibold tracking-wider text-[#302923] uppercase hover:bg-[#F6F1E8]"
+            className="inline-flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-full border border-[#302923]/30 bg-[#FCF9F4] px-4 py-2 text-[11px] font-semibold tracking-wider text-[#302923] uppercase hover:bg-[#F6F1E8]"
           >
             <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.6} />
             <span>Retry Connection</span>
@@ -404,7 +398,7 @@ export const AccountView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => void refreshOrders()}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-[#E4D8C5] bg-[#FCF9F4] px-4 py-2 text-xs font-medium text-[#665B51] hover:border-[#B59972] hover:text-[#302923]"
+                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-[#E4D8C5] bg-[#FCF9F4] px-4 py-2 text-xs font-medium text-[#665B51] hover:border-[#B59972] hover:text-[#302923]"
                 >
                   <RefreshCw
                     className={`h-3.5 w-3.5 ${isLoadingOrders ? 'animate-spin' : ''}`}
@@ -426,7 +420,7 @@ export const AccountView: React.FC = () => {
                       {(() => {
                         const StatusIcon = getOrderStatusIcon(selectedOrder.status);
                         return (
-                          <StatusIcon className="h-5 w-5 text-[#8C6D46]" strokeWidth={1.6} />
+                          <StatusIcon className="h-5 w-5 text-[#7A5D39]" strokeWidth={1.6} />
                         );
                       })()}
                       <h2 className="font-serif text-2xl font-medium text-[#302923] sm:text-3xl">
@@ -476,7 +470,7 @@ export const AccountView: React.FC = () => {
                         onClick={() => handleOpenPrintable(selectedOrder)}
                         className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-[#D8C3A5] bg-[#F6F1E8] px-5 py-2 text-xs font-medium text-[#302923] transition-colors hover:bg-[#EFE7DA]"
                       >
-                        <Printer className="h-4 w-4 text-[#8C6D46]" strokeWidth={1.6} />
+                        <Printer className="h-4 w-4 text-[#7A5D39]" strokeWidth={1.6} />
                         <span>Order Request Summary</span>
                       </button>
                     )}
@@ -527,7 +521,7 @@ export const AccountView: React.FC = () => {
 
                 {/* Itemized Products */}
                 <div className="mt-6 border-t border-[#E4D8C5] pt-5">
-                  <h3 className="text-xs font-semibold tracking-wider text-[#8C6D46] uppercase">
+                  <h3 className="text-xs font-semibold tracking-wider text-[#7A5D39] uppercase">
                     Ordered Pieces
                   </h3>
                   <ul className="mt-3 divide-y divide-[#E4D8C5]">
@@ -566,7 +560,7 @@ export const AccountView: React.FC = () => {
                 {/* Delivery Information & Confirmed Totals */}
                 <div className="mt-5 grid grid-cols-1 gap-5 border-t border-[#E4D8C5] pt-5 md:grid-cols-2">
                   <div className="rounded-xl border border-[#E4D8C5] bg-[#F6F1E8]/70 p-4 text-xs leading-relaxed text-[#665B51]">
-                    <p className="font-semibold tracking-wider text-[#8C6D46] uppercase">
+                    <p className="font-semibold tracking-wider text-[#7A5D39] uppercase">
                       Delivery Information
                     </p>
                     <p className="mt-2 text-sm font-medium text-[#302923]">
@@ -588,7 +582,7 @@ export const AccountView: React.FC = () => {
                   </div>
 
                   <div className="rounded-xl border border-[#E4D8C5] bg-[#F6F1E8]/70 p-4">
-                    <p className="text-xs font-semibold tracking-wider text-[#8C6D46] uppercase">
+                    <p className="text-xs font-semibold tracking-wider text-[#7A5D39] uppercase">
                       Order Totals
                     </p>
                     <dl className="mt-3 space-y-2.5 text-sm">
@@ -650,7 +644,7 @@ export const AccountView: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => void refreshOrders()}
-                    className="inline-flex min-h-[42px] items-center gap-1.5 rounded-full border border-[#E4D8C5] bg-[#FCF9F4] px-4 py-2 text-xs font-medium text-[#665B51] hover:border-[#B59972] hover:text-[#302923]"
+                    className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-[#E4D8C5] bg-[#FCF9F4] px-4 py-2 text-xs font-medium text-[#665B51] hover:border-[#B59972] hover:text-[#302923]"
                   >
                     <RefreshCw
                       className={`h-3.5 w-3.5 ${isLoadingOrders ? 'animate-spin' : ''}`}
@@ -662,29 +656,24 @@ export const AccountView: React.FC = () => {
               </div>
 
               {!isAuthenticated ? (
-                <div className="flex flex-col items-center rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] px-6 py-16 text-center">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#EFE7DA] text-[#8C6D46]">
+                <div className="flex flex-col items-center rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] px-6 py-12 text-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#EFE7DA] text-[#7A5D39]">
                     <Package className="h-6 w-6" strokeWidth={1.5} />
                   </div>
                   <h3 className="mt-4 font-serif text-2xl font-medium text-[#302923]">
                     Sign in to track your orders
                   </h3>
                   <p className="mt-2 max-w-md text-sm leading-relaxed text-[#665B51]">
-                    Sign in with your Google account to view submitted order requests, confirmed
-                    delivery fees, printable receipts, and live dispatch updates.
+                    Sign in with Google or your email and password to view submitted order requests,
+                    confirmed delivery fees, printable receipts, and live dispatch updates.
                   </p>
-                  <button
-                    type="button"
-                    disabled={!isConfigured || isSigningIn}
-                    onClick={() => void loginWithGoogle()}
-                    className="mt-6 min-h-[46px] rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.12em] text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35] disabled:opacity-50"
-                  >
-                    {isSigningIn ? 'Redirecting to Google...' : 'Continue with Google'}
-                  </button>
+                  <div className="mt-6 w-full max-w-sm">
+                    <CustomerAuthPanel compact />
+                  </div>
                 </div>
               ) : orders.length === 0 ? (
                 <div className="flex flex-col items-center rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] px-6 py-16 text-center">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#EFE7DA] text-[#8C6D46]">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#EFE7DA] text-[#7A5D39]">
                     <Package className="h-6 w-6" strokeWidth={1.5} />
                   </div>
                   <h3 className="mt-4 font-serif text-2xl font-medium text-[#302923]">
@@ -699,7 +688,7 @@ export const AccountView: React.FC = () => {
                     onClick={() => navigate('explore')}
                     className="mt-6 min-h-[46px] rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.12em] text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35]"
                   >
-                    Shop Collection
+                    Shop now
                   </button>
                 </div>
               ) : (
@@ -724,7 +713,7 @@ export const AccountView: React.FC = () => {
                               </p>
                               <div className="mt-1 flex items-center gap-2">
                                 <StatusIcon
-                                  className="h-4 w-4 text-[#8C6D46]"
+                                  className="h-4 w-4 text-[#7A5D39]"
                                   strokeWidth={1.7}
                                 />
                                 <h3 className="font-serif text-xl font-medium text-[#302923]">
@@ -744,6 +733,12 @@ export const AccountView: React.FC = () => {
                                   ? formatPrice(order.finalTotalUsd, order.currencyAtOrder)
                                   : formatPrice(order.subtotalUsd, order.currencyAtOrder)}
                               </p>
+                              {confirmed && order.deliveryFeeUsd !== null && (
+                                <p className="mt-0.5 text-[11px] text-[#665B51] tabular-nums">
+                                  Delivery Fee:{' '}
+                                  {formatPrice(order.deliveryFeeUsd, order.currencyAtOrder)}
+                                </p>
+                              )}
                             </div>
                           </div>
 
@@ -783,6 +778,13 @@ export const AccountView: React.FC = () => {
                               </strong>
                             </p>
                           )}
+
+                          {order.ownerMessage && (
+                            <p className="mt-2 rounded-xl border border-[#E4D8C5] bg-[#F6F1E8] px-3 py-2 text-xs leading-relaxed text-[#302923]">
+                              <strong className="font-semibold">VEY RASHA:</strong>{' '}
+                              {order.ownerMessage}
+                            </p>
+                          )}
                         </div>
 
                         {/* Card Actions */}
@@ -790,7 +792,7 @@ export const AccountView: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => setSelectedOrderId(order.id)}
-                            className="inline-flex min-h-[42px] items-center gap-1.5 rounded-full bg-[#302923] px-5 py-2 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35]"
+                            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full bg-[#302923] px-5 py-2 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35]"
                           >
                             <span>View Order Details</span>
                             <ChevronRight className="h-3.5 w-3.5" strokeWidth={1.8} />
@@ -801,7 +803,7 @@ export const AccountView: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => handleOpenPrintable(order)}
-                                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-[#D8C3A5] bg-[#F6F1E8] px-3.5 py-1.5 text-xs font-medium text-[#302923] hover:bg-[#EFE7DA]"
+                                className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-[#D8C3A5] bg-[#F6F1E8] px-3.5 py-2 text-xs font-medium text-[#302923] hover:bg-[#EFE7DA]"
                               >
                                 <Printer className="h-3.5 w-3.5" strokeWidth={1.6} />
                                 <span>Print Receipt</span>
@@ -809,7 +811,7 @@ export const AccountView: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => handleOpenPrintable(order)}
-                                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-[#E4D8C5] px-3.5 py-1.5 text-xs font-medium text-[#665B51] hover:border-[#B59972] hover:text-[#302923]"
+                                className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-[#E4D8C5] px-3.5 py-2 text-xs font-medium text-[#665B51] hover:border-[#B59972] hover:text-[#302923]"
                               >
                                 <FileDown className="h-3.5 w-3.5" strokeWidth={1.6} />
                                 <span>Save as PDF</span>
@@ -819,7 +821,7 @@ export const AccountView: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => handleOpenPrintable(order)}
-                              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-[#D8C3A5] bg-[#F6F1E8] px-3.5 py-1.5 text-xs font-medium text-[#302923] hover:bg-[#EFE7DA]"
+                              className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-[#D8C3A5] bg-[#F6F1E8] px-3.5 py-2 text-xs font-medium text-[#302923] hover:bg-[#EFE7DA]"
                             >
                               <Printer className="h-3.5 w-3.5" strokeWidth={1.6} />
                               <span>Order Summary</span>
@@ -1127,7 +1129,7 @@ export const AccountView: React.FC = () => {
 
           {addresses.length === 0 ? (
             <div className="flex flex-col items-center rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] px-6 py-14 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#EFE7DA] text-[#8C6D46]">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#EFE7DA] text-[#7A5D39]">
                 <MapPin className="h-6 w-6" strokeWidth={1.5} />
               </div>
               <h3 className="mt-4 font-serif text-2xl font-medium text-[#302923]">
@@ -1161,7 +1163,7 @@ export const AccountView: React.FC = () => {
                         {addr.label}
                       </h3>
                       {addr.isDefault && (
-                        <span className="text-xs font-medium text-[#8C6D46]">Default</span>
+                        <span className="text-xs font-medium text-[#7A5D39]">Default</span>
                       )}
                     </div>
                     <p className="mt-2 text-sm font-medium text-[#302923]">{addr.recipientName}</p>
@@ -1182,7 +1184,7 @@ export const AccountView: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => void setDefaultAddress(addr.id)}
-                        className="inline-flex min-h-[40px] items-center gap-1.5 text-xs font-medium text-[#302923] hover:text-[#8C6D46]"
+                        className="inline-flex min-h-[44px] items-center gap-1.5 text-xs font-medium text-[#302923] hover:text-[#7A5D39]"
                       >
                         <Check className="h-3.5 w-3.5" />
                         <span>Set as Default</span>
@@ -1196,7 +1198,7 @@ export const AccountView: React.FC = () => {
                         type="button"
                         onClick={() => openEditAddressForm(addr)}
                         aria-label={`Edit ${addr.label}`}
-                        className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full px-3 text-xs font-medium text-[#302923] hover:bg-[#EFE7DA]"
+                        className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full px-3 text-xs font-medium text-[#302923] hover:bg-[#EFE7DA]"
                       >
                         <Edit3 className="h-3.5 w-3.5" strokeWidth={1.6} />
                         <span>Edit</span>
@@ -1205,7 +1207,7 @@ export const AccountView: React.FC = () => {
                         type="button"
                         onClick={() => void removeAddress(addr.id)}
                         aria-label={`Delete ${addr.label}`}
-                        className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full px-3 text-xs font-medium text-[#665B51] hover:bg-[#EFE7DA] hover:text-[#302923]"
+                        className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full px-3 text-xs font-medium text-[#665B51] hover:bg-[#EFE7DA] hover:text-[#302923]"
                       >
                         <Trash2 className="h-3.5 w-3.5" strokeWidth={1.6} />
                         <span>Delete</span>
@@ -1236,7 +1238,7 @@ export const AccountView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => void refreshNotifications()}
-                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-[#E4D8C5] bg-[#FCF9F4] px-4 py-2 text-xs font-medium text-[#665B51] hover:border-[#B59972] hover:text-[#302923]"
+                className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-[#E4D8C5] bg-[#FCF9F4] px-4 py-2 text-xs font-medium text-[#665B51] hover:border-[#B59972] hover:text-[#302923]"
               >
                 <RefreshCw
                   className={`h-3.5 w-3.5 ${isLoadingNotifications ? 'animate-spin' : ''}`}
@@ -1248,7 +1250,7 @@ export const AccountView: React.FC = () => {
                 <button
                   type="button"
                   onClick={markAllNotificationsRead}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-[#D8C3A5] bg-[#FCF9F4] px-4 py-2 text-xs font-medium text-[#302923] hover:bg-[#EFE7DA]"
+                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-[#D8C3A5] bg-[#FCF9F4] px-4 py-2 text-xs font-medium text-[#302923] hover:bg-[#EFE7DA]"
                 >
                   <CheckCheck className="h-4 w-4" strokeWidth={1.6} />
                   <span>Mark all read</span>
@@ -1269,7 +1271,7 @@ export const AccountView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => void requestBrowserNotifications()}
-                className="min-h-[40px] shrink-0 rounded-full bg-[#302923] px-5 py-2 text-xs font-medium text-[#F6F1E8] hover:bg-[#463D35]"
+                className="min-h-[44px] shrink-0 rounded-full bg-[#302923] px-5 py-2 text-xs font-medium text-[#F6F1E8] hover:bg-[#463D35]"
               >
                 Allow Alerts
               </button>
@@ -1292,7 +1294,7 @@ export const AccountView: React.FC = () => {
                   key={f.id}
                   type="button"
                   onClick={() => setNotifFilter(f.id)}
-                  className={`min-h-[40px] rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
+                  className={`min-h-[44px] rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
                     active
                       ? 'bg-[#302923] text-[#F6F1E8]'
                       : 'border border-[#E4D8C5] bg-[#FCF9F4] text-[#665B51] hover:text-[#302923]'
@@ -1309,14 +1311,14 @@ export const AccountView: React.FC = () => {
               role="alert"
               className="flex items-start gap-2 rounded-xl border border-[#8C6D46] bg-[#EFE7DA] px-4 py-3 text-xs text-[#302923]"
             >
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#8C6D46]" />
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#7A5D39]" />
               <span>{notificationsError}</span>
             </div>
           )}
 
           {filteredNotifications.length === 0 ? (
             <div className="flex flex-col items-center rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] px-6 py-14 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#EFE7DA] text-[#8C6D46]">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#EFE7DA] text-[#7A5D39]">
                 <Bell className="h-5 w-5" strokeWidth={1.5} />
               </div>
               <h3 className="mt-4 font-serif text-2xl font-medium text-[#302923]">
@@ -1331,7 +1333,7 @@ export const AccountView: React.FC = () => {
                 onClick={() => navigate('explore')}
                 className="mt-6 min-h-[44px] rounded-full bg-[#302923] px-6 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35]"
               >
-                Shop Collection
+                Shop now
               </button>
             </div>
           ) : (
@@ -1343,7 +1345,7 @@ export const AccountView: React.FC = () => {
                     : item.type === 'delivery_update'
                     ? Truck
                     : Sparkles;
-                const displayCurrency = item.currency ?? 'USD';
+                const displayCurrency = item.currency ?? STORE_CURRENCY;
                 const hasConfirmedBreakdown =
                   typeof item.confirmedDeliveryFeeUsd === 'number' ||
                   typeof item.confirmedFinalTotalUsd === 'number';
@@ -1370,7 +1372,7 @@ export const AccountView: React.FC = () => {
 
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                          <span className="font-medium tracking-wider text-[#8C6D46] uppercase">
+                          <span className="font-medium tracking-wider text-[#7A5D39] uppercase">
                             {item.typeLabel}
                           </span>
                           <div className="flex items-center gap-2 text-[#665B51]">
@@ -1426,7 +1428,7 @@ export const AccountView: React.FC = () => {
                                 setSelectedOrderId(item.orderId!);
                                 setActiveTab('orders');
                               }}
-                              className="min-h-[38px] rounded-full bg-[#302923] px-4 py-1.5 text-xs font-medium text-[#F6F1E8] hover:bg-[#463D35]"
+                              className="min-h-[44px] rounded-full bg-[#302923] px-4 py-2 text-xs font-medium text-[#F6F1E8] hover:bg-[#463D35]"
                             >
                               View Order Details
                             </button>
@@ -1435,7 +1437,7 @@ export const AccountView: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => markNotificationRead(item.id)}
-                              className="min-h-[38px] rounded-full border border-[#D8C3A5] px-4 py-1.5 text-xs font-medium text-[#302923] hover:bg-[#EFE7DA]"
+                              className="min-h-[44px] rounded-full border border-[#D8C3A5] px-4 py-2 text-xs font-medium text-[#302923] hover:bg-[#EFE7DA]"
                             >
                               Mark as Read
                             </button>
@@ -1457,53 +1459,27 @@ export const AccountView: React.FC = () => {
       {activeTab === 'preferences' && (
         <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
           <div className="rounded-2xl border border-[#E4D8C5] bg-[#FCF9F4] p-6">
-            <h2 className="font-serif text-2xl font-medium text-[#302923]">
-              Currency &amp; Sizing
-            </h2>
+            <h2 className="font-serif text-2xl font-medium text-[#302923]">Sizing Preferences</h2>
 
-            <div className="mt-5 space-y-5">
-              <div>
-                <p className="text-xs font-semibold tracking-wider text-[#302923] uppercase">
-                  Display Currency
-                </p>
-                <div className="mt-2.5 flex flex-wrap gap-2">
-                  {storeSettings.supportedCurrencies.map((code: CurrencyCode) => (
-                    <button
-                      key={code}
-                      type="button"
-                      onClick={() => setCurrency(code)}
-                      className={`min-h-[44px] rounded-full px-5 text-xs font-medium transition-colors ${
-                        currency === code
-                          ? 'bg-[#302923] text-[#F6F1E8]'
-                          : 'border border-[#E4D8C5] bg-[#F6F1E8] text-[#302923] hover:border-[#B59972]'
-                      }`}
-                    >
-                      {code}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <p className="text-xs font-semibold tracking-wider text-[#302923] uppercase">
-                  Preferred Garment Size
-                </p>
-                <div className="mt-2.5 flex flex-wrap gap-2">
-                  {['XS', 'S', 'M', 'L', 'XL'].map((size) => (
-                    <button
-                      key={size}
-                      type="button"
-                      onClick={() => updateCustomer({ preferredSize: size })}
-                      className={`min-h-[44px] min-w-[48px] rounded-lg border text-xs font-medium transition-colors ${
-                        customer.preferredSize === size
-                          ? 'border-[#302923] bg-[#302923] text-[#F6F1E8]'
-                          : 'border-[#E4D8C5] bg-[#F6F1E8] text-[#302923]'
-                      }`}
-                    >
-                      {size}
-                    </button>
-                  ))}
-                </div>
+            <div className="mt-5">
+              <p className="text-xs font-semibold tracking-wider text-[#302923] uppercase">
+                Preferred Garment Size
+              </p>
+              <div className="mt-2.5 flex flex-wrap gap-2">
+                {['XS', 'S', 'M', 'L', 'XL'].map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => updateCustomer({ preferredSize: size })}
+                    className={`min-h-[44px] min-w-[48px] rounded-lg border text-xs font-medium transition-colors ${
+                      customer.preferredSize === size
+                        ? 'border-[#302923] bg-[#302923] text-[#F6F1E8]'
+                        : 'border-[#E4D8C5] bg-[#F6F1E8] text-[#302923]'
+                    }`}
+                  >
+                    {size}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
@@ -1522,7 +1498,7 @@ export const AccountView: React.FC = () => {
                 <div className="mt-3">
                   {browserNotificationPermission === 'granted' ? (
                     <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[#302923]">
-                      <Check className="h-3.5 w-3.5 text-[#8C6D46]" />
+                      <Check className="h-3.5 w-3.5 text-[#7A5D39]" />
                       <span>Browser alerts enabled</span>
                     </span>
                   ) : browserNotificationPermission === 'unsupported' ? (
@@ -1537,7 +1513,7 @@ export const AccountView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => void requestBrowserNotifications()}
-                      className="min-h-[40px] rounded-full border border-[#D8C3A5] bg-[#F6F1E8] px-4 py-2 text-xs font-medium text-[#302923] hover:bg-[#EFE7DA]"
+                      className="min-h-[44px] rounded-full border border-[#D8C3A5] bg-[#F6F1E8] px-4 py-2 text-xs font-medium text-[#302923] hover:bg-[#EFE7DA]"
                     >
                       Enable Browser Alerts
                     </button>

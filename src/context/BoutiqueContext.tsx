@@ -9,7 +9,7 @@ import React, {
 } from 'react';
 import { APP_BASE_PATH } from '../config/api';
 import { CATEGORIES } from '../data/catalog';
-import { DEFAULT_STORE_SETTINGS } from '../data/storeConfig';
+import { DEFAULT_STORE_SETTINGS, STORE_CURRENCY } from '../data/storeConfig';
 import { isSupabaseConfigured, SUPABASE_CONFIG_WARNING } from '../lib/supabase';
 import {
   createUserAddress,
@@ -42,6 +42,7 @@ import {
   toggleWishlistProduct,
 } from '../services/wishlist.service';
 import type {
+  AccountTab,
   AppRoute,
   CartItem,
   CategorySlug,
@@ -59,6 +60,7 @@ import type {
   StoreSettings,
   WelcomeAuthMode,
 } from '../types/boutique';
+import { getMaxStockForSelection } from '../utils/stock';
 import { useAuth } from './AuthContext';
 
 export type SortOption = 'featured' | 'price-asc' | 'price-desc' | 'newest';
@@ -67,10 +69,21 @@ export type BackendStatus = 'checking' | 'connected' | 'unavailable';
 
 type BrowserNotificationPermission = 'default' | 'granted' | 'denied' | 'unsupported';
 
+interface NavigateOptions {
+  productId?: string;
+  category?: CategorySlug;
+  accountTab?: AccountTab;
+  orderId?: string | null;
+}
+
 interface BoutiqueContextValue {
   route: AppRoute;
   selectedProductId: string;
-  navigate: (route: AppRoute, options?: { productId?: string; category?: CategorySlug }) => void;
+  accountTab: AccountTab;
+  setAccountTab: (tab: AccountTab) => void;
+  selectedOrderId: string | null;
+  setSelectedOrderId: (orderId: string | null) => void;
+  navigate: (route: AppRoute, options?: NavigateOptions) => void;
   showWelcomeAuth: boolean;
   welcomeAuthMode: WelcomeAuthMode;
   setWelcomeAuthMode: (mode: WelcomeAuthMode) => void;
@@ -93,7 +106,6 @@ interface BoutiqueContextValue {
   campaigns: EditorialCampaign[];
   storeSettings: StoreSettings;
   currency: CurrencyCode;
-  setCurrency: (c: CurrencyCode) => void;
   wishlistIds: string[];
   toggleWishlist: (productId: string) => void;
   isWishlisted: (productId: string) => boolean;
@@ -260,11 +272,13 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const [route, setRoute] = useState<AppRoute>(initialLocation.route);
   const [selectedProductId, setSelectedProductId] = useState<string>(initialLocation.productId);
+  const [accountTab, setAccountTab] = useState<AccountTab>('orders');
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<CategorySlug>('all');
   const [priceBand, setPriceBand] = useState<PriceBand>('all');
   const [sortBy, setSortBy] = useState<SortOption>('featured');
-  const [currency, setCurrency] = useState<CurrencyCode>(DEFAULT_STORE_SETTINGS.defaultCurrency);
+  const currency: CurrencyCode = STORE_CURRENCY;
 
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -458,6 +472,11 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const unsubscribe = subscribeCustomerRealtime(user.id, {
       onNotification: (incoming) => {
         setNotifications((prev) => upsertNotification(prev, incoming));
+        if (incoming.orderId) {
+          void fetchCustomerOrders(user.id)
+            .then((list) => setOrders(list))
+            .catch(() => undefined);
+        }
         showToast(incoming.title);
         if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
           try {
@@ -472,9 +491,37 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       onOrderUpdated: (updatedOrder) => {
         setOrders((prev) => upsertOrder(prev, updatedOrder));
       },
+      onSubscribed: () => {
+        void Promise.all([
+          fetchCustomerNotifications(user.id),
+          fetchCustomerOrders(user.id),
+        ])
+          .then(([notifList, orderList]) => {
+            setNotifications(notifList);
+            setOrders(orderList);
+          })
+          .catch(() => undefined);
+      },
     });
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void Promise.all([
+          fetchCustomerNotifications(user.id),
+          fetchCustomerOrders(user.id),
+        ])
+          .then(([notifList, orderList]) => {
+            setNotifications(notifList);
+            setOrders(orderList);
+          })
+          .catch(() => undefined);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       unsubscribe();
     };
   }, [showToast, user]);
@@ -486,13 +533,19 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [toastMessage]);
 
   const navigate = useCallback(
-    (nextRoute: AppRoute, options?: { productId?: string; category?: CategorySlug }) => {
+    (nextRoute: AppRoute, options?: NavigateOptions) => {
       const nextProductId = options?.productId ?? selectedProductId;
       if (options?.productId) {
         setSelectedProductId(options.productId);
       }
       if (options?.category) {
         setActiveCategory(options.category);
+      }
+      if (options?.accountTab) {
+        setAccountTab(options.accountTab);
+      }
+      if (options && 'orderId' in options) {
+        setSelectedOrderId(options.orderId ?? null);
       }
       setShowWelcomeAuth(false);
       setRoute(nextRoute);
@@ -517,7 +570,7 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     (actionLabel: string): boolean => {
       if (user) return true;
       if (isDevGuestSession) return true;
-      showToast(`Sign in with Google to ${actionLabel}`);
+      showToast(`Sign in to ${actionLabel}`);
       openWelcomeAuth('landing');
       return false;
     },
@@ -555,8 +608,32 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     (product: Product, size: string, color: ColorOption, quantity = 1) => {
       if (!requireCustomerSession('add pieces to your shopping bag')) return;
 
+      const maxStock = getMaxStockForSelection(product, size, color.name);
+      if (maxStock <= 0) {
+        showToast('This size and colour is currently out of stock');
+        return;
+      }
+
+      const existingEntry = cart.find(
+        (entry) =>
+          entry.productId === product.id &&
+          entry.selectedSize === size &&
+          entry.selectedColor.name === color.name
+      );
+      const currentQty = existingEntry?.quantity ?? 0;
+      if (currentQty >= maxStock) {
+        showToast(
+          maxStock === 1
+            ? 'Only 1 available — already in your bag'
+            : `Only ${maxStock} available in this option`
+        );
+        return;
+      }
+
+      const allowedDelta = Math.min(Math.max(1, quantity), maxStock - currentQty);
+
       if (user) {
-        void upsertCartItem(user.id, product.id, size, color, quantity)
+        void upsertCartItem(user.id, product.id, size, color, allowedDelta, maxStock)
           .then((nextItems) => {
             setCart(nextItems);
             showToast(`Added ${product.name} to your bag`);
@@ -573,7 +650,9 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const existing = prev.find((entry) => entry.id === itemKey);
         if (existing) {
           return prev.map((entry) =>
-            entry.id === itemKey ? { ...entry, quantity: entry.quantity + quantity } : entry
+            entry.id === itemKey
+              ? { ...entry, quantity: Math.min(maxStock, entry.quantity + allowedDelta) }
+              : entry
           );
         }
         return [
@@ -583,23 +662,39 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             productId: product.id,
             selectedSize: size,
             selectedColor: color,
-            quantity,
+            quantity: allowedDelta,
           },
         ];
       });
       showToast(`Added ${product.name} to your bag`);
     },
-    [requireCustomerSession, showToast, user]
+    [cart, requireCustomerSession, showToast, user]
   );
 
   const updateCartQuantity = useCallback(
     (cartItemId: string, delta: number) => {
       const current = cart.find((c) => c.id === cartItemId);
       if (!current) return;
+
+      const product = products.find((p) => p.id === current.productId);
+      const maxStock = product
+        ? getMaxStockForSelection(product, current.selectedSize, current.selectedColor.name)
+        : 20;
+
+      if (delta > 0 && current.quantity >= maxStock) {
+        showToast(
+          maxStock <= 1
+            ? 'Only 1 piece available in this option'
+            : `Only ${maxStock} available in this option`
+        );
+        return;
+      }
+
       const nextQty = current.quantity + delta;
+      const effectiveMax = Math.max(1, maxStock);
 
       if (user) {
-        void updateCartItemQuantity(user.id, cartItemId, nextQty)
+        void updateCartItemQuantity(user.id, cartItemId, nextQty, effectiveMax)
           .then((nextItems) => setCart(nextItems))
           .catch((err) => {
             showToast(err instanceof Error ? err.message : 'Unable to update bag quantity.');
@@ -609,11 +704,15 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       setCart((prev) =>
         prev
-          .map((item) => (item.id === cartItemId ? { ...item, quantity: nextQty } : item))
+          .map((item) =>
+            item.id === cartItemId
+              ? { ...item, quantity: Math.min(effectiveMax, nextQty) }
+              : item
+          )
           .filter((item) => item.quantity > 0)
       );
     },
-    [cart, showToast, user]
+    [cart, products, showToast, user]
   );
 
   const removeFromCart = useCallback(
@@ -670,11 +769,14 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (!user) {
         return {
           status: 'error',
-          message: 'Please sign in with Google before submitting an order request.',
+          message: 'Please sign in before submitting an order request.',
         };
       }
 
-      const result = await submitBoutiqueOrder(payload);
+      const result = await submitBoutiqueOrder({
+        ...payload,
+        currency: STORE_CURRENCY,
+      });
       if (result.status === 'pending_review' && result.order) {
         setOrders((prev) => upsertOrder(prev, result.order!));
         void refreshNotifications();
@@ -839,6 +941,10 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     () => ({
       route,
       selectedProductId,
+      accountTab,
+      setAccountTab,
+      selectedOrderId,
+      setSelectedOrderId,
       navigate,
       showWelcomeAuth,
       welcomeAuthMode,
@@ -862,7 +968,6 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       campaigns,
       storeSettings,
       currency,
-      setCurrency,
       wishlistIds,
       toggleWishlist,
       isWishlisted,
@@ -907,6 +1012,8 @@ export const BoutiqueProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [
       route,
       selectedProductId,
+      accountTab,
+      selectedOrderId,
       navigate,
       showWelcomeAuth,
       welcomeAuthMode,

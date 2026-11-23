@@ -1,24 +1,21 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
-  Clock,
   MapPin,
-  Printer,
   RefreshCw,
   ShieldCheck,
   User,
 } from 'lucide-react';
+import { STORE_CURRENCY } from '../../data/storeConfig';
 import { useAuth } from '../../context/AuthContext';
 import { useBoutique } from '../../context/BoutiqueContext';
-import type { OrderRecord } from '../../types/boutique';
 import { formatPrice } from '../../utils/formatCurrency';
-import { ORDER_STATUS_LABELS } from '../../utils/orderStatus';
-import { PrintableReceiptModal } from '../orders/PrintableReceiptModal';
+import { CustomerAuthPanel } from '../auth/CustomerAuthPanel';
 import { LuxuryImage } from '../ui/LuxuryImage';
 
 export const CheckoutView: React.FC = () => {
-  const { isAuthenticated, isConfigured, isSigningIn, loginWithGoogle } = useAuth();
+  const { isAuthenticated } = useAuth();
   const {
     products,
     cart,
@@ -31,6 +28,8 @@ export const CheckoutView: React.FC = () => {
     clearCart,
     navigate,
     currency,
+    storeSettings,
+    showToast,
     backendStatus,
     backendErrorMessage,
     checkBackendHealth,
@@ -48,19 +47,6 @@ export const CheckoutView: React.FC = () => {
 
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submittedOrder, setSubmittedOrder] = useState<OrderRecord | null>(null);
-  const [submissionMessage, setSubmissionMessage] = useState<string | null>(null);
-  const [showSummaryModal, setShowSummaryModal] = useState(false);
-  const confirmationRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (submittedOrder) {
-      confirmationRef.current?.closest('[data-scroll-container]')?.scrollTo({
-        top: 0,
-        behavior: 'smooth',
-      });
-    }
-  }, [submittedOrder]);
 
   const applySavedAddress = (addressId: string) => {
     const found = addresses.find((a) => a.id === addressId);
@@ -134,7 +120,7 @@ export const CheckoutView: React.FC = () => {
         },
         items,
         giftPresentation: giftWrap,
-        currency,
+        currency: STORE_CURRENCY,
       });
 
       if (result.status !== 'pending_review' || !result.order) {
@@ -156,133 +142,13 @@ export const CheckoutView: React.FC = () => {
         });
       }
 
-      setSubmittedOrder(result.order);
-      setSubmissionMessage(result.message);
       clearCart();
+      showToast(`Order request received — ${result.order.orderReference}`);
+      navigate('account', { accountTab: 'orders', orderId: result.order.id });
     } finally {
       setIsSubmitting(false);
     }
   };
-
-  // Order Request Received Screen (Pending Review — NEVER falsely marked accepted)
-  if (submittedOrder) {
-    return (
-      <div
-        ref={confirmationRef}
-        className="mx-auto max-w-3xl px-4 pt-8 pb-24 sm:px-6 md:pt-12"
-      >
-        <div className="rounded-2xl border border-[#D8C3A5] bg-[#FCF9F4] p-6 sm:p-10">
-          <div className="flex flex-col items-center text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#EFE7DA] text-[#8C6D46]">
-              <Clock className="h-6 w-6" strokeWidth={1.6} />
-            </div>
-
-            <p className="mt-4 text-[11px] font-medium tracking-[0.18em] text-[#8C6D46] uppercase">
-              {ORDER_STATUS_LABELS[submittedOrder.status]}
-            </p>
-            <h1 className="mt-1.5 font-serif text-3xl font-medium text-[#302923]">
-              Order Request Received
-            </h1>
-            <p className="mt-2.5 max-w-lg text-sm leading-relaxed text-[#665B51]">
-              {submissionMessage ??
-                'Your order request has been received. Our boutique will review your delivery details and confirm your delivery fee and final total.'}
-            </p>
-            <p className="mt-3 text-xs text-[#302923] tabular-nums">
-              Order Reference: <strong>{submittedOrder.orderReference}</strong>
-            </p>
-          </div>
-
-          <div className="mt-7 rounded-xl border border-[#E4D8C5] bg-[#F6F1E8]/60 p-5">
-            <h2 className="font-serif text-lg font-medium text-[#302923]">
-              Order Request Summary
-            </h2>
-
-            <dl className="mt-3 space-y-2.5 text-sm">
-              <div className="flex justify-between gap-4">
-                <dt className="text-[#665B51]">Status</dt>
-                <dd className="font-semibold text-[#302923]">
-                  {ORDER_STATUS_LABELS[submittedOrder.status]}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-[#665B51]">Customer</dt>
-                <dd className="text-right font-medium text-[#302923]">
-                  {submittedOrder.customer.fullName}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-[#665B51]">Phone</dt>
-                <dd className="text-right text-[#302923]">{submittedOrder.customer.phone}</dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-[#665B51]">Delivery Destination</dt>
-                <dd className="max-w-xs text-right text-[#302923]">
-                  {submittedOrder.customer.deliveryAddress}, {submittedOrder.customer.area},{' '}
-                  {submittedOrder.customer.city}, {submittedOrder.customer.country}
-                </dd>
-              </div>
-              {submittedOrder.customer.deliveryInstructions && (
-                <div className="flex justify-between gap-4">
-                  <dt className="text-[#665B51]">Delivery Instructions</dt>
-                  <dd className="max-w-xs text-right text-[#302923]">
-                    {submittedOrder.customer.deliveryInstructions}
-                  </dd>
-                </div>
-              )}
-              <div className="flex justify-between gap-4 border-t border-[#E4D8C5] pt-3">
-                <dt className="text-[#665B51]">Product Subtotal</dt>
-                <dd className="font-semibold text-[#302923] tabular-nums">
-                  {formatPrice(submittedOrder.subtotalUsd, submittedOrder.currencyAtOrder)}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4 text-xs text-[#665B51]">
-                <dt>Delivery Fee</dt>
-                <dd className="text-right">Pending boutique confirmation</dd>
-              </div>
-              <div className="flex justify-between gap-4 text-xs text-[#665B51]">
-                <dt>Final Order Total</dt>
-                <dd className="text-right font-medium text-[#302923]">
-                  Will be confirmed by the boutique
-                </dd>
-              </div>
-            </dl>
-          </div>
-
-          <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-center">
-            <button
-              type="button"
-              onClick={() => setShowSummaryModal(true)}
-              className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-full border border-[#D8C3A5] px-6 py-3 text-xs font-medium tracking-wider text-[#302923] uppercase hover:bg-[#EFE7DA]"
-            >
-              <Printer className="h-4 w-4" strokeWidth={1.6} />
-              <span>Order Request Summary</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('account')}
-              className="min-h-[46px] rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35]"
-            >
-              View My Orders
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('explore')}
-              className="min-h-[46px] rounded-full border border-[#E4D8C5] px-6 py-3 text-xs font-medium tracking-wider text-[#665B51] uppercase hover:text-[#302923]"
-            >
-              Continue Shopping
-            </button>
-          </div>
-        </div>
-
-        {showSummaryModal && (
-          <PrintableReceiptModal
-            order={submittedOrder}
-            onClose={() => setShowSummaryModal(false)}
-          />
-        )}
-      </div>
-    );
-  }
 
   if (cart.length === 0) {
     return (
@@ -296,7 +162,7 @@ export const CheckoutView: React.FC = () => {
           onClick={() => navigate('explore')}
           className="mt-6 min-h-[46px] rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35]"
         >
-          Shop Collection
+          Shop now
         </button>
       </div>
     );
@@ -304,7 +170,7 @@ export const CheckoutView: React.FC = () => {
 
   if (!isAuthenticated) {
     return (
-      <div className="mx-auto max-w-xl px-4 pt-10 pb-24">
+      <div className="mx-auto max-w-lg px-4 pt-8 pb-16">
         <button
           type="button"
           onClick={() => navigate('cart')}
@@ -314,28 +180,18 @@ export const CheckoutView: React.FC = () => {
           <span>Return to Shopping Bag</span>
         </button>
 
-        <div className="rounded-2xl border border-[#D8C3A5] bg-[#FCF9F4] p-7 text-center sm:p-10">
-          <p className="text-[11px] font-medium tracking-[0.18em] text-[#8C6D46] uppercase">
+        <div className="rounded-2xl border border-[#D8C3A5] bg-[#FCF9F4] p-6 sm:p-8">
+          <p className="text-[11px] font-medium tracking-[0.18em] text-[#7A5D39] uppercase">
             Boutique Checkout
           </p>
           <h1 className="mt-2 font-serif text-3xl font-medium text-[#302923]">
             Sign In to Submit Your Order
           </h1>
-          <p className="mt-3 text-sm leading-relaxed text-[#665B51]">
-            Please sign in with Google so VEY RASHA can securely link your order request, save your
-            manual delivery address, and send real-time delivery fee confirmations.
+          <p className="mt-2 mb-6 text-sm leading-relaxed text-[#665B51]">
+            Your shopping bag stays saved. Sign in to submit your order request and track live
+            delivery fee confirmations.
           </p>
-          <button
-            type="button"
-            disabled={!isConfigured || isSigningIn}
-            onClick={() => void loginWithGoogle()}
-            className="mt-6 inline-flex min-h-[48px] items-center justify-center rounded-full bg-[#302923] px-8 py-3 text-xs font-semibold tracking-[0.14em] text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35] disabled:opacity-50"
-          >
-            {isSigningIn ? 'Redirecting to Google...' : 'Continue with Google'}
-          </button>
-          {!isConfigured && backendErrorMessage && (
-            <p className="mt-4 text-xs text-[#665B51]">{backendErrorMessage}</p>
-          )}
+          <CustomerAuthPanel compact />
         </div>
       </div>
     );
@@ -654,13 +510,16 @@ export const CheckoutView: React.FC = () => {
               <p className="mt-1.5 font-medium text-[#302923]">
                 Your order total will be confirmed by the boutique.
               </p>
+              {storeSettings.pickupLocationNote && (
+                <p className="mt-1.5 text-[#665B51]">{storeSettings.pickupLocationNote}</p>
+              )}
             </div>
           </dl>
 
           <button
             type="submit"
             disabled={isSubmitting}
-            className="mt-6 flex min-h-[48px] w-full items-center justify-center rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.14em] text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35] disabled:opacity-60"
+            className="mt-6 flex min-h-[48px] w-full items-center justify-center rounded-full bg-[#302923] px-7 py-3 text-xs font-semibold tracking-[0.14em] text-[#F6F1E8] uppercase transition-colors hover:bg-[#463D35] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isSubmitting ? 'Submitting Order Request...' : 'Place Order Request'}
           </button>

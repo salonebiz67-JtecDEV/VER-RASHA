@@ -43,7 +43,7 @@ export const BottomNav: React.FC = () => {
               onClick={() => navigate(tab.route)}
               aria-current={active ? 'page' : undefined}
               className={`flex min-h-[48px] flex-col items-center justify-center transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#302923] ${
-                active ? 'text-[#302923]' : 'text-[#8B7F73] hover:text-[#302923]'
+                active ? 'text-[#302923]' : 'text-[#665B51] hover:text-[#302923]'
               }`}
             >
               <div className="relative flex items-center justify-center">
@@ -56,7 +56,7 @@ export const BottomNav: React.FC = () => {
               </div>
               <span
                 className={`mt-1 text-[10px] tracking-[0.02em] whitespace-nowrap ${
-                  active ? 'font-semibold text-[#302923]' : 'font-normal text-[#8B7F73]'
+                  active ? 'font-semibold text-[#302923]' : 'font-normal text-[#665B51]'
                 }`}
               >
                 {tab.label}

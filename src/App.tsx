@@ -87,9 +87,13 @@ const PageScrollContainer: React.FC<PageScrollContainerProps> = ({
           : 'invisible pointer-events-none z-0 opacity-0'
       }`}
     >
-      <div className="flex min-h-full flex-col">
+      <div
+        className={`flex min-h-full flex-col ${
+          pageKey === 'home' ? '' : 'pb-[calc(5.25rem+env(safe-area-inset-bottom,0px))] md:pb-8'
+        }`}
+      >
         <div className="flex-1">{children}</div>
-        <Footer />
+        {pageKey === 'home' && <Footer />}
       </div>
     </div>
   );

@@ -189,17 +189,17 @@ export const ExploreView: React.FC = () => {
           role="alert"
           className="mt-10 flex flex-col items-center rounded-2xl border border-[#D8C3A5] bg-[#FCF9F4] px-6 py-12 text-center"
         >
-          <AlertCircle className="h-7 w-7 text-[#8C6D46]" strokeWidth={1.5} />
+          <AlertCircle className="h-7 w-7 text-[#7A5D39]" strokeWidth={1.5} />
           <h2 className="mt-3 font-serif text-xl font-medium text-[#302923]">
-            Collection Temporarily Unavailable
+            Couldn&apos;t load collection
           </h2>
           <p className="mt-1 max-w-md text-sm text-[#665B51]">{catalogError}</p>
           <button
             type="button"
             onClick={retryCatalogLoad}
-            className="mt-5 min-h-[44px] rounded-full bg-[#302923] px-6 py-2.5 text-xs font-medium text-[#F6F1E8] hover:bg-[#463D35]"
+            className="mt-5 min-h-[44px] rounded-full bg-[#302923] px-6 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35]"
           >
-            Retry Loading
+            Couldn&apos;t load, tap to retry
           </button>
         </div>
       )}
@@ -227,6 +227,13 @@ export const ExploreView: React.FC = () => {
           <p className="mt-2 max-w-md text-sm text-[#665B51]">
             Our upcoming seasonal collection is being prepared. Please revisit shortly.
           </p>
+          <button
+            type="button"
+            onClick={retryCatalogLoad}
+            className="mt-6 min-h-[44px] rounded-full bg-[#302923] px-6 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35]"
+          >
+            Shop now
+          </button>
         </div>
       )}
 
@@ -241,9 +248,9 @@ export const ExploreView: React.FC = () => {
           <button
             type="button"
             onClick={resetExploreFilters}
-            className="mt-6 min-h-[44px] rounded-full bg-[#302923] px-6 py-2.5 text-xs font-medium text-[#F6F1E8] hover:bg-[#463D35]"
+            className="mt-6 min-h-[44px] rounded-full bg-[#302923] px-6 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35]"
           >
-            Clear All Filters
+            Shop now
           </button>
         </div>
       )}

@@ -8,6 +8,8 @@ export type AppRoute =
   | 'account'
   | 'notifications';
 
+export type AccountTab = 'orders' | 'profile' | 'addresses' | 'notifications' | 'preferences';
+
 export type WelcomeAuthMode = 'landing';
 
 export type CurrencyCode = 'USD' | 'EUR' | 'GBP' | 'CAD' | 'AED' | 'NGN';
@@ -28,6 +30,15 @@ export interface ColorOption {
   hex: string;
 }
 
+export interface ProductVariantOption {
+  id: string;
+  size: string;
+  colorName: string;
+  colorHex: string;
+  stockCount: number;
+  isAvailable: boolean;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -43,6 +54,7 @@ export interface Product {
   care: string;
   sizes: string[];
   colors: ColorOption[];
+  variants?: ProductVariantOption[];
   stockStatus: StockStatus;
   stockCount: number;
   isNewArrival: boolean;
@@ -236,6 +248,7 @@ export interface PaymentMethodConfig {
 
 export interface StoreSettings {
   boutiqueName: string;
+  boutiqueDescription?: string;
   defaultCurrency: CurrencyCode;
   supportedCurrencies: CurrencyCode[];
   freeDeliveryThresholdUsd: number | null;

@@ -88,10 +88,12 @@ export async function upsertCartItem(
   productId: string,
   size: string,
   color: ColorOption,
-  quantityDelta: number
+  quantityDelta: number,
+  maxStock = 20
 ): Promise<CartItem[]> {
   if (!supabase) throw new Error(SUPABASE_CONFIG_WARNING);
 
+  const effectiveMax = Math.max(1, Math.min(20, maxStock));
   const cart = await getOrCreateCart(userId);
 
   const { data: existing } = await supabase
@@ -103,7 +105,7 @@ export async function upsertCartItem(
     .eq('selected_color_name', color.name)
     .maybeSingle();
 
-  const nextQty = Math.min(20, Math.max(1, (existing?.quantity ?? 0) + quantityDelta));
+  const nextQty = Math.min(effectiveMax, Math.max(1, (existing?.quantity ?? 0) + quantityDelta));
 
   const { error } = await supabase.from('cart_items').upsert(
     {
@@ -129,7 +131,8 @@ export async function upsertCartItem(
 export async function updateCartItemQuantity(
   userId: string,
   cartItemId: string,
-  nextQuantity: number
+  nextQuantity: number,
+  maxStock = 20
 ): Promise<CartItem[]> {
   if (!supabase) throw new Error(SUPABASE_CONFIG_WARNING);
 
@@ -137,7 +140,8 @@ export async function updateCartItemQuantity(
     return removeCartItem(userId, cartItemId);
   }
 
-  const clamped = Math.min(20, Math.max(1, nextQuantity));
+  const effectiveMax = Math.max(1, Math.min(20, maxStock));
+  const clamped = Math.min(effectiveMax, Math.max(1, nextQuantity));
   const { error } = await supabase
     .from('cart_items')
     .update({ quantity: clamped })

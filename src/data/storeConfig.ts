@@ -1,9 +1,12 @@
-import type { StoreSettings } from '../types/boutique';
+import type { CurrencyCode, StoreSettings } from '../types/boutique';
+
+export const STORE_CURRENCY: CurrencyCode = 'USD';
 
 export const DEFAULT_STORE_SETTINGS: StoreSettings = {
   boutiqueName: 'VEY RASHA',
-  defaultCurrency: 'USD',
-  supportedCurrencies: ['USD', 'EUR', 'GBP', 'CAD', 'AED', 'NGN'],
+  boutiqueDescription: 'Curated women’s fashion, tailoring, and signature accessories.',
+  defaultCurrency: STORE_CURRENCY,
+  supportedCurrencies: [STORE_CURRENCY],
   freeDeliveryThresholdUsd: null,
   deliveryRegions: [
     {

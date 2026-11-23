@@ -46,6 +46,90 @@ export async function signInWithGoogle(): Promise<{ error: string | null }> {
   return { error: null };
 }
 
+export async function signInWithEmail(
+  email: string,
+  password: string
+): Promise<{ error: string | null }> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { error: SUPABASE_CONFIG_WARNING };
+  }
+
+  const cleanEmail = email.trim();
+  if (!cleanEmail || !password) {
+    return { error: 'Please enter both your email address and password.' };
+  }
+
+  const { error } = await supabase.auth.signInWithPassword({
+    email: cleanEmail,
+    password,
+  });
+
+  if (error) {
+    return { error: error.message || 'Unable to sign in with email and password.' };
+  }
+
+  return { error: null };
+}
+
+export async function signUpWithEmail(
+  email: string,
+  password: string,
+  fullName?: string
+): Promise<{
+  error: string | null;
+  requiresEmailConfirmation?: boolean;
+  message?: string;
+}> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { error: SUPABASE_CONFIG_WARNING };
+  }
+
+  const cleanEmail = email.trim();
+  const cleanName = fullName?.trim() || '';
+
+  if (!cleanEmail || !password) {
+    return { error: 'Please enter your email address and a password.' };
+  }
+
+  const { data, error } = await supabase.auth.signUp({
+    email: cleanEmail,
+    password,
+    options: {
+      emailRedirectTo: resolveOAuthRedirectUrl(),
+      data: cleanName ? { full_name: cleanName } : undefined,
+    },
+  });
+
+  if (error) {
+    return { error: error.message || 'Unable to create your account right now.' };
+  }
+
+  if (data.user && data.session) {
+    await supabase
+      .from('profiles')
+      .upsert(
+        {
+          id: data.user.id,
+          email: data.user.email ?? cleanEmail,
+          ...(cleanName ? { full_name: cleanName } : {}),
+        },
+        { onConflict: 'id' }
+      );
+    return {
+      error: null,
+      requiresEmailConfirmation: false,
+      message: 'Your VEY RASHA account is ready.',
+    };
+  }
+
+  return {
+    error: null,
+    requiresEmailConfirmation: true,
+    message:
+      'Account created. Please check your email inbox and confirm your address before signing in.',
+  };
+}
+
 export async function signOutCustomer(): Promise<{ error: string | null }> {
   if (!supabase) return { error: null };
   const { error } = await supabase.auth.signOut();

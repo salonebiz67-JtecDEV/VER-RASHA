@@ -18,14 +18,9 @@ export const Footer: React.FC = () => {
               {storeSettings.boutiqueName}
             </p>
             <p className="mt-3 max-w-sm text-sm leading-relaxed text-[#665B51]">
-              A contemporary women&apos;s fashion house devoted to luminous mulberry silk,
-              tailored natural linen, cashmere outerwear, and sculptural leather pieces.
+              {storeSettings.boutiqueDescription ||
+                'Curated women’s fashion, tailoring, and signature accessories.'}
             </p>
-            {storeSettings.pickupLocationNote && (
-              <p className="mt-3 max-w-sm text-xs leading-relaxed text-[#665B51]">
-                {storeSettings.pickupLocationNote}
-              </p>
-            )}
           </div>
 
           {/* Shop Categories */}
@@ -33,21 +28,21 @@ export const Footer: React.FC = () => {
             <h4 className="text-[11px] font-semibold tracking-[0.16em] text-[#302923] uppercase">
               Shop
             </h4>
-            <ul className="mt-3 space-y-2 text-sm text-[#665B51]">
+            <ul className="mt-3 space-y-1.5 text-sm text-[#665B51]">
               <li>
                 <button
                   type="button"
                   onClick={() => navigate('explore', { category: 'dresses' })}
-                  className="transition-colors hover:text-[#302923]"
+                  className="inline-flex min-h-[36px] items-center transition-colors hover:text-[#302923]"
                 >
-                  Silk Dresses
+                  Dresses
                 </button>
               </li>
               <li>
                 <button
                   type="button"
                   onClick={() => navigate('explore', { category: 'tailoring' })}
-                  className="transition-colors hover:text-[#302923]"
+                  className="inline-flex min-h-[36px] items-center transition-colors hover:text-[#302923]"
                 >
                   Tailoring
                 </button>
@@ -56,7 +51,7 @@ export const Footer: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => navigate('explore', { category: 'outerwear' })}
-                  className="transition-colors hover:text-[#302923]"
+                  className="inline-flex min-h-[36px] items-center transition-colors hover:text-[#302923]"
                 >
                   Outerwear
                 </button>
@@ -64,19 +59,28 @@ export const Footer: React.FC = () => {
               <li>
                 <button
                   type="button"
-                  onClick={() => navigate('explore', { category: 'handbags' })}
-                  className="transition-colors hover:text-[#302923]"
+                  onClick={() => navigate('explore', { category: 'separates' })}
+                  className="inline-flex min-h-[36px] items-center transition-colors hover:text-[#302923]"
                 >
-                  Leather Goods
+                  Separates
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  onClick={() => navigate('explore', { category: 'handbags' })}
+                  className="inline-flex min-h-[36px] items-center transition-colors hover:text-[#302923]"
+                >
+                  Handbags
                 </button>
               </li>
               <li>
                 <button
                   type="button"
                   onClick={() => navigate('explore', { category: 'jewellery' })}
-                  className="transition-colors hover:text-[#302923]"
+                  className="inline-flex min-h-[36px] items-center transition-colors hover:text-[#302923]"
                 >
-                  Fine Jewellery
+                  Jewellery
                 </button>
               </li>
             </ul>
@@ -87,12 +91,12 @@ export const Footer: React.FC = () => {
             <h4 className="text-[11px] font-semibold tracking-[0.16em] text-[#302923] uppercase">
               Client Services
             </h4>
-            <ul className="mt-3 space-y-2 text-sm text-[#665B51]">
+            <ul className="mt-3 space-y-1.5 text-sm text-[#665B51]">
               <li>
                 <button
                   type="button"
-                  onClick={() => navigate('account')}
-                  className="transition-colors hover:text-[#302923]"
+                  onClick={() => navigate('account', { accountTab: 'orders', orderId: null })}
+                  className="inline-flex min-h-[36px] items-center transition-colors hover:text-[#302923]"
                 >
                   Orders &amp; Tracking
                 </button>
@@ -216,9 +220,9 @@ export const Footer: React.FC = () => {
                     boutique review.
                   </p>
                   <p>
-                    Product prices shown reflect garment pricing in the selected display currency.
-                    Applicable delivery fees and final order totals are confirmed directly by the
-                    boutique after reviewing your manually entered delivery destination.
+                    Product prices shown reflect garment pricing in USD. Applicable delivery fees and
+                    final order totals are confirmed directly by the boutique after reviewing your
+                    manually entered delivery destination.
                   </p>
                   <p>
                     Confirmed orders include an itemized receipt and live fulfillment updates from

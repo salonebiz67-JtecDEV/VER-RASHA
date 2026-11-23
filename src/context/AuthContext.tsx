@@ -13,8 +13,10 @@ import {
   fetchCustomerProfile,
   getCurrentSession,
   isDevGuestAccessEnabled,
+  signInWithEmail,
   signInWithGoogle,
   signOutCustomer,
+  signUpWithEmail,
   subscribeToAuthChanges,
   updateCustomerProfile,
 } from '../services/auth.service';
@@ -33,6 +35,20 @@ interface AuthContextValue {
   isDevGuestEnabled: boolean;
   isDevGuestSession: boolean;
   loginWithGoogle: () => Promise<{ ok: boolean; error: string | null }>;
+  loginWithEmail: (
+    email: string,
+    password: string
+  ) => Promise<{ ok: boolean; error: string | null }>;
+  registerWithEmail: (
+    email: string,
+    password: string,
+    fullName?: string
+  ) => Promise<{
+    ok: boolean;
+    error: string | null;
+    requiresEmailConfirmation?: boolean;
+    message?: string;
+  }>;
   logout: () => Promise<void>;
   enterDevGuestMode: () => void;
   exitDevGuestMode: () => void;
@@ -142,6 +158,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
+  const loginWithEmail = useCallback(async (email: string, password: string) => {
+    setAuthError(null);
+    if (!isSupabaseConfigured) {
+      setAuthError(SUPABASE_CONFIG_WARNING);
+      return { ok: false, error: SUPABASE_CONFIG_WARNING };
+    }
+
+    setIsSigningIn(true);
+    try {
+      const { error } = await signInWithEmail(email, password);
+      if (error) {
+        setAuthError(error);
+        return { ok: false, error };
+      }
+      return { ok: true, error: null };
+    } finally {
+      setIsSigningIn(false);
+    }
+  }, []);
+
+  const registerWithEmail = useCallback(
+    async (email: string, password: string, fullName?: string) => {
+      setAuthError(null);
+      if (!isSupabaseConfigured) {
+        setAuthError(SUPABASE_CONFIG_WARNING);
+        return { ok: false, error: SUPABASE_CONFIG_WARNING };
+      }
+
+      setIsSigningIn(true);
+      try {
+        const result = await signUpWithEmail(email, password, fullName);
+        if (result.error) {
+          setAuthError(result.error);
+          return { ok: false, error: result.error };
+        }
+        return {
+          ok: true,
+          error: null,
+          requiresEmailConfirmation: result.requiresEmailConfirmation,
+          message: result.message,
+        };
+      } finally {
+        setIsSigningIn(false);
+      }
+    },
+    []
+  );
+
   const logout = useCallback(async () => {
     setAuthError(null);
     setIsDevGuestSession(false);
@@ -197,6 +261,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       isDevGuestEnabled: devGuestEnabled,
       isDevGuestSession,
       loginWithGoogle,
+      loginWithEmail,
+      registerWithEmail,
       logout,
       enterDevGuestMode,
       exitDevGuestMode,
@@ -213,6 +279,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       devGuestEnabled,
       isDevGuestSession,
       loginWithGoogle,
+      loginWithEmail,
+      registerWithEmail,
       logout,
       enterDevGuestMode,
       exitDevGuestMode,

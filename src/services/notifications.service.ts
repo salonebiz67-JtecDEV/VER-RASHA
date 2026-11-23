@@ -105,6 +105,7 @@ export async function markAllCustomerNotificationsAsRead(userId: string): Promis
 export interface CustomerRealtimeCallbacks {
   onNotification: (notification: NotificationItem) => void;
   onOrderUpdated: (order: OrderRecord) => void;
+  onSubscribed?: () => void;
 }
 
 export function subscribeCustomerRealtime(
@@ -148,7 +149,11 @@ export function subscribeCustomerRealtime(
         });
       }
     )
-    .subscribe();
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        callbacks.onSubscribed?.();
+      }
+    });
 
   return () => {
     void client.removeChannel(channel);

@@ -1,13 +1,13 @@
-import { DEFAULT_STORE_SETTINGS } from '../data/storeConfig';
+import { DEFAULT_STORE_SETTINGS, STORE_CURRENCY } from '../data/storeConfig';
 import { isSupabaseConfigured, supabase, SUPABASE_CONFIG_WARNING } from '../lib/supabase';
 import type {
   CampaignStatus,
   CategorySlug,
   Collection,
   ColorOption,
-  CurrencyCode,
   EditorialCampaign,
   Product,
+  ProductVariantOption,
   StockStatus,
   StoreSettings,
 } from '../types/boutique';
@@ -201,29 +201,36 @@ function mapProductRow(row: DbProductRow): Product {
     .filter(Boolean);
 
   const variants = row.product_variants ?? [];
-  const availableVariants = variants.filter(
-    (v) => v.is_available !== false && (v.stock_count ?? 0) > 0
-  );
+  const mappedVariants: ProductVariantOption[] = variants.map((v) => ({
+    id: v.id,
+    size: v.size,
+    colorName: v.color_name,
+    colorHex: v.color_hex || '#D8C3A5',
+    stockCount: Math.max(0, Number(v.stock_count ?? 0)),
+    isAvailable: v.is_available !== false && Number(v.stock_count ?? 0) > 0,
+  }));
+
+  const availableVariants = mappedVariants.filter((v) => v.isAvailable && v.stockCount > 0);
 
   const sizeSet = new Set<string>();
   const colorMap = new Map<string, ColorOption>();
   let totalStock = 0;
 
-  for (const v of variants) {
+  for (const v of mappedVariants) {
     if (v.size) sizeSet.add(v.size);
-    if (v.color_name && !colorMap.has(v.color_name)) {
-      colorMap.set(v.color_name, {
-        name: v.color_name,
-        hex: v.color_hex || '#D8C3A5',
+    if (v.colorName && !colorMap.has(v.colorName)) {
+      colorMap.set(v.colorName, {
+        name: v.colorName,
+        hex: v.colorHex,
       });
     }
-    if (v.is_available !== false) {
-      totalStock += Math.max(0, v.stock_count ?? 0);
+    if (v.isAvailable) {
+      totalStock += v.stockCount;
     }
   }
 
   let stockStatus: StockStatus = 'in_stock';
-  if (variants.length > 0) {
+  if (mappedVariants.length > 0) {
     if (availableVariants.length === 0 || totalStock <= 0) {
       stockStatus = 'out_of_stock';
     } else if (totalStock <= 3) {
@@ -246,6 +253,7 @@ function mapProductRow(row: DbProductRow): Product {
     care: row.care ?? '',
     sizes: Array.from(sizeSet),
     colors: Array.from(colorMap.values()),
+    variants: mappedVariants,
     stockStatus,
     stockCount: totalStock,
     isNewArrival: Boolean(row.is_new_arrival),
@@ -427,19 +435,12 @@ export async function fetchBoutiqueCatalog(): Promise<CatalogSnapshot> {
   ];
 
   const settingsRow = settingsRes.data as DbStoreSettingsRow | null;
-  const supportedCurrencies = (
-    settingsRow?.supported_currencies?.length
-      ? settingsRow.supported_currencies
-      : DEFAULT_STORE_SETTINGS.supportedCurrencies
-  ) as CurrencyCode[];
 
   const storeSettings: StoreSettings = {
     ...DEFAULT_STORE_SETTINGS,
     boutiqueName: settingsRow?.boutique_name?.trim() || DEFAULT_STORE_SETTINGS.boutiqueName,
-    defaultCurrency:
-      (settingsRow?.default_currency as CurrencyCode | undefined) ??
-      DEFAULT_STORE_SETTINGS.defaultCurrency,
-    supportedCurrencies,
+    defaultCurrency: STORE_CURRENCY,
+    supportedCurrencies: [STORE_CURRENCY],
     giftPresentationAvailable:
       settingsRow?.gift_presentation_available ?? DEFAULT_STORE_SETTINGS.giftPresentationAvailable,
     giftPresentationLabel:

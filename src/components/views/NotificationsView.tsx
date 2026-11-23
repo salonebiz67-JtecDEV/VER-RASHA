@@ -13,6 +13,7 @@ import { useBoutique } from '../../context/BoutiqueContext';
 import type { NotificationType } from '../../types/boutique';
 import { formatPrice } from '../../utils/formatCurrency';
 import { formatOrderDate } from '../../utils/orderStatus';
+import { CustomerAuthPanel } from '../auth/CustomerAuthPanel';
 
 type NotificationFilter = 'all' | NotificationType;
 
@@ -24,7 +25,7 @@ const FILTER_TABS: { id: NotificationFilter; label: string }[] = [
 ];
 
 export const NotificationsView: React.FC = () => {
-  const { isAuthenticated, isConfigured, isSigningIn, loginWithGoogle } = useAuth();
+  const { isAuthenticated } = useAuth();
   const {
     notifications,
     markNotificationRead,
@@ -105,25 +106,20 @@ export const NotificationsView: React.FC = () => {
       </div>
 
       {!isAuthenticated && (
-        <div className="mt-6 rounded-2xl border border-[#D8C3A5] bg-[#FCF9F4] p-6 text-center sm:p-8">
-          <p className="text-[11px] font-medium tracking-[0.16em] text-[#8C6D46] uppercase">
-            Private Order Alerts
-          </p>
-          <h2 className="mt-2 font-serif text-2xl font-medium text-[#302923]">
-            Sign In to Receive Live Updates
-          </h2>
-          <p className="mx-auto mt-2 max-w-md text-sm text-[#665B51]">
-            Sign in with Google to receive real-time order confirmations, confirmed delivery fees,
-            and dispatch milestones.
-          </p>
-          <button
-            type="button"
-            disabled={!isConfigured || isSigningIn}
-            onClick={() => void loginWithGoogle()}
-            className="mt-5 inline-flex min-h-[44px] items-center justify-center rounded-full bg-[#302923] px-6 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35] disabled:opacity-50"
-          >
-            {isSigningIn ? 'Redirecting to Google...' : 'Continue with Google'}
-          </button>
+        <div className="mt-6 rounded-2xl border border-[#D8C3A5] bg-[#FCF9F4] p-6 sm:p-8">
+          <div className="mx-auto max-w-md">
+            <p className="text-[11px] font-medium tracking-[0.16em] text-[#7A5D39] uppercase">
+              Private Order Alerts
+            </p>
+            <h2 className="mt-2 font-serif text-2xl font-medium text-[#302923]">
+              Sign In to Receive Live Updates
+            </h2>
+            <p className="mt-2 mb-5 text-sm text-[#665B51]">
+              Sign in with Google or email to receive real-time order confirmations, confirmed
+              delivery fees, and dispatch milestones.
+            </p>
+            <CustomerAuthPanel compact />
+          </div>
         </div>
       )}
 
@@ -278,11 +274,11 @@ export const NotificationsView: React.FC = () => {
               onClick={() => navigate('explore')}
               className="min-h-[44px] rounded-full bg-[#302923] px-6 py-2.5 text-xs font-semibold tracking-wider text-[#F6F1E8] uppercase hover:bg-[#463D35]"
             >
-              Shop Collection
+              Shop now
             </button>
             <button
               type="button"
-              onClick={() => navigate('account')}
+              onClick={() => navigate('account', { accountTab: 'orders', orderId: null })}
               className="min-h-[44px] rounded-full border border-[#D8C3A5] px-6 py-2.5 text-xs font-medium tracking-wider text-[#302923] uppercase hover:bg-[#EFE7DA]"
             >
               View Orders
@@ -380,9 +376,16 @@ export const NotificationsView: React.FC = () => {
                           type="button"
                           onClick={() => {
                             markNotificationRead(item.id);
-                            navigate(item.actionRoute!);
+                            if (item.actionRoute === 'account') {
+                              navigate('account', {
+                                accountTab: 'orders',
+                                orderId: item.orderId ?? null,
+                              });
+                            } else {
+                              navigate(item.actionRoute!);
+                            }
                           }}
-                          className="min-h-[38px] rounded-full bg-[#302923] px-4 py-1.5 text-xs font-medium text-[#F6F1E8] hover:bg-[#463D35]"
+                          className="min-h-[44px] rounded-full bg-[#302923] px-4 py-1.5 text-xs font-medium text-[#F6F1E8] hover:bg-[#463D35]"
                         >
                           View Order &amp; Receipt
                         </button>
@@ -391,7 +394,7 @@ export const NotificationsView: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => markNotificationRead(item.id)}
-                          className="min-h-[38px] rounded-full border border-[#D8C3A5] px-4 py-1.5 text-xs font-medium text-[#302923] hover:bg-[#EFE7DA]"
+                          className="min-h-[44px] rounded-full border border-[#D8C3A5] px-4 py-1.5 text-xs font-medium text-[#302923] hover:bg-[#EFE7DA]"
                         >
                           Mark as Read
                         </button>
