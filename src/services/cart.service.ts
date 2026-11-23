@@ -10,7 +10,12 @@ interface DbCartItemRow {
   quantity: number;
 }
 
-async function getOrCreateCart(
+const cartInFlightByUser = new Map<
+  string,
+  Promise<{ id: string; giftPresentation: boolean }>
+>();
+
+async function resolveOrCreateCart(
   userId: string
 ): Promise<{ id: string; giftPresentation: boolean }> {
   if (!supabase) throw new Error(SUPABASE_CONFIG_WARNING);
@@ -38,14 +43,53 @@ async function getOrCreateCart(
     .select('id, gift_presentation')
     .single();
 
-  if (insertError || !created?.id) {
-    throw new Error(insertError?.message || 'Unable to create shopping bag.');
+  if (insertError) {
+    if (insertError.code === '23505') {
+      const { data: conflictExisting, error: conflictSelectError } = await supabase
+        .from('carts')
+        .select('id, gift_presentation')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (conflictSelectError || !conflictExisting?.id) {
+        throw new Error(conflictSelectError?.message || 'Unable to load shopping bag.');
+      }
+
+      return {
+        id: conflictExisting.id,
+        giftPresentation: Boolean(conflictExisting.gift_presentation),
+      };
+    }
+
+    throw new Error(insertError.message || 'Unable to create shopping bag.');
+  }
+
+  if (!created?.id) {
+    throw new Error('Unable to create shopping bag.');
   }
 
   return {
     id: created.id,
     giftPresentation: Boolean(created.gift_presentation),
   };
+}
+
+async function getOrCreateCart(
+  userId: string
+): Promise<{ id: string; giftPresentation: boolean }> {
+  const existingRequest = cartInFlightByUser.get(userId);
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const request = resolveOrCreateCart(userId).finally(() => {
+    if (cartInFlightByUser.get(userId) === request) {
+      cartInFlightByUser.delete(userId);
+    }
+  });
+
+  cartInFlightByUser.set(userId, request);
+  return request;
 }
 
 export async function fetchCartState(

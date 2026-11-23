@@ -1,6 +1,8 @@
 import { supabase, SUPABASE_CONFIG_WARNING } from '../lib/supabase';
 
-async function getOrCreateWishlistId(userId: string): Promise<string> {
+const wishlistInFlightByUser = new Map<string, Promise<string>>();
+
+async function resolveOrCreateWishlistId(userId: string): Promise<string> {
   if (!supabase) throw new Error(SUPABASE_CONFIG_WARNING);
 
   const { data: existing, error: selectError } = await supabase
@@ -21,11 +23,45 @@ async function getOrCreateWishlistId(userId: string): Promise<string> {
     .select('id')
     .single();
 
-  if (insertError || !created?.id) {
-    throw new Error(insertError?.message || 'Unable to initialize wishlist.');
+  if (insertError) {
+    if (insertError.code === '23505') {
+      const { data: conflictExisting, error: conflictSelectError } = await supabase
+        .from('wishlists')
+        .select('id')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (conflictSelectError || !conflictExisting?.id) {
+        throw new Error(conflictSelectError?.message || 'Unable to read wishlist.');
+      }
+
+      return conflictExisting.id;
+    }
+
+    throw new Error(insertError.message || 'Unable to initialize wishlist.');
+  }
+
+  if (!created?.id) {
+    throw new Error('Unable to initialize wishlist.');
   }
 
   return created.id;
+}
+
+async function getOrCreateWishlistId(userId: string): Promise<string> {
+  const existingRequest = wishlistInFlightByUser.get(userId);
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const request = resolveOrCreateWishlistId(userId).finally(() => {
+    if (wishlistInFlightByUser.get(userId) === request) {
+      wishlistInFlightByUser.delete(userId);
+    }
+  });
+
+  wishlistInFlightByUser.set(userId, request);
+  return request;
 }
 
 export async function fetchWishlistProductIds(userId: string): Promise<string[]> {
